@@ -815,7 +815,9 @@ Mail to sales@unoapi.cloud
 - Send Stories: https://github.com/WhiskeySockets/Baileys#broadcast-lists--stories
 - Filter by specific date on sync history: https://github.com/WhiskeySockets/Baileys?tab=readme-ov-file#receive-full-history
 - Add /health endpoint with test connection with redis, s3 and rabbitmq
-- https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/smb_message_echoes?locale=pt_BR format message sending by app\
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/groups/groups-messaging#group-message-sent-example
+- https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/smb_message_echoes?locale=pt_BR format message sending by app
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/groups/groups-messaging#webhooks-1
 - https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/history?locale=pt_BR format for sync history 
 - https://developers.facebook.com/documentation/business-messaging/whatsapp/payments/payments-br/offsite-pix?locale=pt_BR
 

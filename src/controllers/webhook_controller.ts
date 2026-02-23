@@ -18,7 +18,10 @@ export class WebhookController {
     logger.debug('webhook whatsapp headers %s', JSON.stringify(req.headers))
     logger.debug('webhook whatsapp params %s', JSON.stringify(req.params))
     logger.debug('webhook whatsapp body %s', JSON.stringify(req.body))
-    const { phone } = req.params
+    const phone = this.getPhoneNumber(req)
+    if (!phone) {
+      throw `Not retrieve phone number in path params ${JSON.stringify(req.params)} or body ${JSON.stringify(req.body)}`
+    } 
     await this.service.send(phone, req.body)
     res.status(200).send(`{"success": true}`)
   }
@@ -29,7 +32,7 @@ export class WebhookController {
     logger.debug('webhook whatsapp verify params %s', JSON.stringify(req.params))
     logger.debug('webhook whatsapp verify body %s', JSON.stringify(req.body))
     logger.debug('webhook whatsapp verify query %s', JSON.stringify(req.query))
-    const { phone } = req.params
+    const phone = this.getPhoneNumber(req) || ''
 
     const mode = req.query['hub.mode']
     const token = req.query['hub.verify_token']
@@ -41,5 +44,9 @@ export class WebhookController {
     } else {
       res.sendStatus(403)
     }
+  }
+
+  private getPhoneNumber(req: Request) {
+    return req.params?.phone || ((req.body?.entry || [])[0]?.changes || [])[0]?.value?.metadata?.display_phone_number
   }
 }
