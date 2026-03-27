@@ -1,3 +1,10 @@
+import * as Sentry from '@sentry/node'
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    sendDefaultPii: true,
+  })
+}
 import logger from './services/logger'
 import { amqpConsume } from './amqp'
 import { startRedis } from './services/redis'
@@ -18,7 +25,10 @@ import { addToBlacklist } from './jobs/add_to_blacklist'
 import { TimerJob } from './jobs/timer'
 import { TranscriberJob } from './jobs/transcriber'
 import { SpeecherJob } from './jobs/speecher'
+import { RequestJob } from './jobs/request'
 import { OutgoingAmqp } from './services/outgoing_amqp'
+import { RequestHttp } from './services/request_http'
+import { RequestAmqp } from './services/request_amqp'
 
 import {
   UNOAPI_QUEUE_RELOAD,
@@ -35,6 +45,7 @@ import {
   UNOAPI_QUEUE_TIMER,
   UNOAPI_QUEUE_TRANSCRIBER,
   UNOAPI_QUEUE_SPEECH,
+  UNOAPI_QUEUE_REQUEST,
 } from './defaults'
 
 const incomingAmqp: Incoming = new IncomingAmqp(getConfigRedis)
@@ -43,19 +54,12 @@ const outgoingAmqp: Outgoing = new OutgoingAmqp(getConfigRedis)
 const reload = new Reload()
 const reloadJob = new ReloadJob(reload)
 const mediaJob = new MediaJob(getConfigRedis)
+const requestJob = new RequestJob(new RequestHttp())
 const notificationJob = new NotificationJob(incomingAmqp)
 const outgingJob = new OutgoingJob(getConfigRedis, outgoingCloudApi)
-const timerJob = new TimerJob(incomingAmqp, getConfigRedis)
+const timerJob = new TimerJob(incomingAmqp, getConfigRedis, new RequestAmqp())
 const transcriberJob = new TranscriberJob(outgoingAmqp, getConfigRedis)
 const speecherJob = new SpeecherJob(incomingAmqp, getConfigRedis)
-
-import * as Sentry from '@sentry/node'
-if (process.env.SENTRY_DSN) {
-  Sentry.init({
-    dsn: process.env.SENTRY_DSN,
-    sendDefaultPii: true,
-  })
-}
 
 const startBroker = async () => {
   await startRedis()
@@ -66,6 +70,9 @@ const startBroker = async () => {
 
   logger.info('Starting reload consumer')
   await amqpConsume(UNOAPI_EXCHANGE_BROKER_NAME, UNOAPI_QUEUE_RELOAD, '*', reloadJob.consume.bind(reloadJob), { type: 'topic' })
+
+  logger.info('Starting request consumer')
+  await amqpConsume(UNOAPI_EXCHANGE_BROKER_NAME, UNOAPI_QUEUE_REQUEST, '*', requestJob.consume.bind(requestJob), { type: 'topic' })
 
   logger.info('Starting media consumer')
   await amqpConsume(UNOAPI_EXCHANGE_BROKER_NAME, UNOAPI_QUEUE_MEDIA, '*', mediaJob.consume.bind(mediaJob), { type: 'topic' })

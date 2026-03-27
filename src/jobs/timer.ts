@@ -3,16 +3,19 @@ import { Incoming } from '../services/incoming'
 import logger from '../services/logger'
 import { getLastTimer } from '../services/redis'
 import { start } from '../services/timer'
+import { Request } from '../services/request'
 
 export class TimerJob {
   private incoming: Incoming
   private getConfig: getConfig
+  private request: Request
   private getLastTimerFunction: typeof getLastTimer
 
-  constructor(incoming: Incoming, getConfig: getConfig, getLastTimerFunction: typeof getLastTimer = getLastTimer) {
+  constructor(incoming: Incoming, getConfig: getConfig, request: Request, getLastTimerFunction: typeof getLastTimer = getLastTimer) {
     this.incoming = incoming
     this.getLastTimerFunction = getLastTimerFunction
     this.getConfig = getConfig
+    this.request = request
   }
 
   async consume(phone: string, data: object) {
@@ -34,15 +37,26 @@ export class TimerJob {
         return
       }
       logger.debug('timer phone %s to %s consumer enqueue message: %s', phone, to, message)
-      const body = {
-        messaging_product: 'whatsapp',
-        to,
-        type,
-        [type]: {
-          body: message,
-        },
+      if (type == 'webhook') {
+        let url
+        try {
+          const json = JSON.parse(message)
+          url = json.url
+        } catch {
+          url = message
+        }
+        await this.request.send(phone, url, 'POST', {}, '')
+      } else {
+        const body = {
+          messaging_product: 'whatsapp',
+          to,
+          type,
+          [type]: {
+            body: message,
+          },
+        }
+        await this.incoming.send(phone, body, {})
       }
-      await this.incoming.send(phone, body, {})
       if (nexts?.length > 0) {
         logger.debug('timer phone %s to %s consumer found nexts with %s', phone, to, JSON.stringify(nexts))
         const first = nexts.shift()

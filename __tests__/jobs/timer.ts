@@ -5,11 +5,13 @@ import { TimerJob } from '../../src/jobs/timer'
 import { Incoming } from '../../src/services/incoming'
 import { start } from '../../src/services/timer'
 import { getConfig } from '../../src/services/redis'
+import { Request } from '../../src/services/request'
 import { dataStores } from '../../src/services/data_store'
 const startMock = start as jest.MockedFunction<typeof start>
 
 describe('timer', () => {
   let incoming,
+    request,
     job: TimerJob,
     payload: any,
     phone: string,
@@ -24,6 +26,7 @@ describe('timer', () => {
 
   beforeEach(() => {
     incoming = mock<Incoming>()
+    request = mock<Request>()
     mockGetLastTimer = jest.fn()
     messageDirection = 'incoming'
     getConfigVar = async () => {
@@ -37,7 +40,7 @@ describe('timer', () => {
           }
       }
     }
-    job = new TimerJob(incoming, getConfigVar, mockGetLastTimer)
+    job = new TimerJob(incoming, getConfigVar, request, mockGetLastTimer)
     phone = `${new Date().getTime()}`
     to = `${new Date().getTime()}`
     message = `${new Date().getTime()}s sdfhosfo`

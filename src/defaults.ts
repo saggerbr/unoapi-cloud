@@ -96,6 +96,7 @@ export const UNOAPI_QUEUE_BLACKLIST_RELOAD = `${UNOAPI_QUEUE_NAME}.blacklist.rel
 export const UNOAPI_QUEUE_BIND = `${UNOAPI_QUEUE_NAME}.bind`
 export const UNOAPI_QUEUE_TIMER = `${UNOAPI_QUEUE_NAME}.timer`
 export const UNOAPI_QUEUE_OUTGOING = `${UNOAPI_QUEUE_NAME}.outgoing`
+export const UNOAPI_QUEUE_REQUEST = `${UNOAPI_QUEUE_NAME}.request`
 export const UNOAPI_QUEUE_CONTACT = `${UNOAPI_QUEUE_NAME}.contact`
 export const UNOAPI_QUEUE_BULK_PARSER = `${UNOAPI_QUEUE_NAME}.bulk.parser`
 export const UNOAPI_QUEUE_RELOAD = `${UNOAPI_QUEUE_NAME}.reload`
@@ -160,6 +161,7 @@ export const STORAGE_ACCESS_KEY_ID = process.env.STORAGE_ACCESS_KEY_ID || 'my-mi
 export const STORAGE_SECRET_ACCESS_KEY = process.env.STORAGE_SECRET_ACCESS_KEY || '2NVQWHTTT3asdasMgqapGchy6yAMZn'
 export const STORAGE_REGION = process.env.STORAGE_REGION || 'us-east-1'
 export const STORAGE_TIMEOUT_MS = parseInt(process.env.STORAGE_TIMEOUT_MS || '360000')
+export const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '360000')
 export const STORAGE_ENDPOINT = process.env.STORAGE_ENDPOINT || 'http://localhost:9000'
 export const STORAGE_FORCE_PATH_STYLE: boolean =
   process.env.STORAGE_FORCE_PATH_STYLE === _undefined ? false : process.env.STORAGE_FORCE_PATH_STYLE == 'true'
