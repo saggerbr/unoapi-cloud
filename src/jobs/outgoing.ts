@@ -93,7 +93,7 @@ export class OutgoingJob {
         const { dataStore } = store
         if (isUpdateMessage(payload)) {
           payload.entry[0].changes[0].value.statuses = await Promise.all(
-            payload.entry[0].changes[0].value.statuses.map(async (status) => {
+            (payload?.entry[0]?.changes[0]?.value?.statuses || []).map(async (status) => {
               const currentId = status.id
               const unoId = await dataStore.loadUnoId(currentId)
               if (unoId) {
@@ -104,14 +104,14 @@ export class OutgoingJob {
           )
         } else {
           payload.entry[0].changes[0].value.contacts = await Promise.all(
-            payload.entry[0].changes[0].value.contacts.map(async (contact) => {
+            (payload?.entry[0]?.changes[0]?.value?.contacts || []).map(async (contact) => {
               contact.wa_id = jidToPhoneNumber(contact.wa_id, '')
               return contact
             }),
           )
           const isIncoming = isIncomingMessage(payload)
           payload.entry[0].changes[0].value.messages = await Promise.all(
-            payload.entry[0].changes[0].value.messages.map(async (message) => {
+            (payload?.entry[0]?.changes[0]?.value?.messages ||[]).map(async (message) => {
               if (TYPE_MESSAGES_MEDIA.includes(message.type) && isIncoming) {
                 const { mediaStore } = store
                 message = await mediaStore.saveMediaForwarder(message)
