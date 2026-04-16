@@ -59,7 +59,7 @@ export class ClientForward implements Client {
       const to = extractDestinyPhone(payload)
       logger.error('Error on send body %s => %s', body, JSON.stringify(content))
       let error
-      if (content?.code) {
+      if (content?.code && !payload?.status) {
         error = {
           object: 'whatsapp_business_account',
           entry: [
