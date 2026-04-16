@@ -371,15 +371,16 @@ export class ClientBaileys implements Client {
     this.event('call', async (events: any[]) => {
       for (let i = 0; i < events.length; i++) {
         logger.debug('call event %s => %s', this.phone, JSON.stringify(events[i]))
-        const { from, id, status } = events[i]
-        if (status == 'ringing' && !this.calls.has(from)) {
+        const { from, callerPn, id, status } = events[i]
+        const fromPhone = callerPn || from
+        if (status == 'ringing' && !this.calls.has(fromPhone)) {
           if (!this.calls.has(this.phone)) {
             this.calls.set(this.phone, new Map<string, boolean>())
           }
-          this.calls.get(this.phone)?.set(from, true)
+          this.calls.get(this.phone)?.set(fromPhone, true)
           if (this.config.rejectCalls && this.rejectCall) {
-            await this.rejectCall(id, from)
-            await this.sendMessage(from, { text: this.config.rejectCalls }, {})
+            await this.rejectCall(id, fromPhone)
+            await this.sendMessage(fromPhone, { text: this.config.rejectCalls }, {})
             logger.info('Rejecting calls %s %s', this.phone, this.config.rejectCalls)
           }
           const messageCallsWebhook = this.config.rejectCallsWebhook || this.config.messageCallsWebhook
@@ -387,7 +388,7 @@ export class ClientBaileys implements Client {
             const waMessageKey = {
               fromMe: false,
               id: generateUnoId('CALL'),
-              remoteJid: from,
+              remoteJid: fromPhone,
             }
             const message = {
               key: waMessageKey,
@@ -398,8 +399,8 @@ export class ClientBaileys implements Client {
             await this.listener.process(this.phone, [message], 'notify')
           }
           setTimeout(() => {
-            logger.debug('Clean call rejecteds %s -> %s', this.phone, from)
-            this.calls.get(this.phone)?.delete(from)
+            logger.debug('Clean call rejecteds %s -> %s', this.phone, fromPhone)
+            this.calls.get(this.phone)?.delete(fromPhone)
           }, 10_000)
         }
       }
