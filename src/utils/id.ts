@@ -1,5 +1,5 @@
 import { v1 as uuid } from 'uuid'
-const UNOAPI_BASE_ID = 'UNO'
+export const UNOAPI_BASE_ID = 'UNO'
 
 export type ID_ADD =
   | 'INC' // incoming messages

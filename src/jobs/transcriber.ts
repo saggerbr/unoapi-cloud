@@ -3,6 +3,7 @@ import { getConfig, Webhook } from '../services/config'
 import logger from '../services/logger'
 import { Outgoing } from '../services/outgoing'
 import { BASE_URL } from '../defaults'
+import { UNOAPI_BASE_ID } from '../utils/id'
 import mediaToBuffer from '../utils/media_to_buffer'
 import { extractDestinyPhone } from '../services/transformer'
 import { generateUnoId } from '../utils/id'
@@ -32,7 +33,7 @@ export class TranscriberJob {
       const mediaKey = audioMessage.audio.id
       let token = config.authToken
       let mediaUrl = `${BASE_URL}/v13.0/${mediaKey}`
-      if (config.connectionType == 'forward') {
+      if (config.connectionType == 'forward' && mediaKey.indexOf(`${UNOAPI_BASE_ID}.`) < 0) {
         mediaUrl = `${config.webhookForward.url}/${config.webhookForward.version}/${mediaKey}`
         token = config.webhookForward.token
       }
