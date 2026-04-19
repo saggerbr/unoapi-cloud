@@ -11,6 +11,7 @@ import { amqpConsume } from './amqp'
 import { IncomingAmqp } from './services/incoming_amqp'
 import { getConfig } from './services/config'
 import { getConfigRedis } from './services/config_redis'
+import { startRedis } from './services/redis'
 import { Incoming } from './services/incoming'
 import { addToBlacklistRedis, isInBlacklistInRedis } from './services/blacklist'
 import { version } from '../package.json'
@@ -44,6 +45,7 @@ const bulkReportJob = new BulkReportJob(outgoingCloudApi, getConfigRedis)
 const bulkWebhookJob = new BulkWebhookJob(outgoingCloudApi)
 
 const startBulker = async () => {
+  await startRedis()
   logger.info('Unoapi Cloud version %s starting bulker...', version)
 
   logger.info('Starting commander consumer')
