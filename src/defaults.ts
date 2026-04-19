@@ -79,6 +79,7 @@ export const UNOAPI_RETRY_REQUEST_DELAY_MS = parseInt(process.env.UNOAPI_RETRY_R
 export const DATA_TTL: number = parseInt(process.env.DATA_TTL || `${60 * 60 * 24 * 30}`) // a month
 export const DATA_URL_TTL: number = parseInt(process.env.DATA_URL_TTL || `${60 * 60 * 24 * 3}`) // tree days
 export const SESSION_TTL: number = parseInt(process.env.SESSION_TTL || '-1')
+export const SESSION_KEY_TTL: number = parseInt(process.env.SESSION_KEY_TTL || '-1') // a day
 export const UNOAPI_X_COUNT_RETRIES: string = process.env.UNOAPI_X_COUNT_RETRIES || 'x-unoapi-count-retries'
 export const UNOAPI_X_MAX_RETRIES: string = process.env.UNOAPI_X_MAX_RETRIES || 'x-unoapi-max-retries'
 export const UNOAPI_EXCHANGE_NAME = process.env.UNOAPI_EXCHANGE_NAME || 'unoapi'

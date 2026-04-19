@@ -362,10 +362,10 @@ export const getAuth = async (phone: string, parse = (value: string) => JSON.par
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const setAuth = async (phone: string, value: any, stringify = (value: string) => JSON.stringify(value, null, '\t')) => {
+export const setAuth = async (phone: string, value: any, ttl, stringify = (value: string) => JSON.stringify(value, null, '\t')) => {
   const key = authKey(phone)
   const authValue = stringify(value)
-  return redisSetAndExpire(key, authValue, SESSION_TTL)
+  return redisSetAndExpire(key, authValue, ttl)
 }
 
 export const setbulkMessage = async (phone: string, bulkId: string, messageId: string, phoneNumber) => {

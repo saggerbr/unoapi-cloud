@@ -1,5 +1,5 @@
 export interface writeData {
-  (key: string, data: object): Promise<void>
+  (key: string, data: object, ttl: number): Promise<void>
 }
 
 export interface readData {
@@ -15,5 +15,5 @@ export interface getKey {
 }
 
 export interface session {
-  (phone: string): Promise<{ writeData: writeData; readData: readData; removeData: removeData; getKey: getKey }>
+  (phone: string): Promise<{ writeData: writeData; readData: readData; removeData: removeData; getKey: getKey, extension }>
 }

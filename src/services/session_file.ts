@@ -4,8 +4,9 @@ import { session, writeData, readData, removeData, getKey } from './session'
 import logger from './logger'
 
 export const sessionFile: session = async (phone: string) => {
-  const getKey: getKey = (type: string, id: string) => `/${type}-${id}.json`
-  const getFile = (key: string) => `${phone}${key ? key : '/creds.json'}`.replace('/.', '')
+  const extension = '.json'
+  const getKey: getKey = (type: string, id: string) => `${type}-${id}${extension}`
+  const getFile = (key: string) => `${phone}/${key}`.replace('/.', '')
 
   if (!existsSync(phone)) {
     mkdirSync(phone, { recursive: true })
@@ -46,7 +47,7 @@ export const sessionFile: session = async (phone: string) => {
     }
   }
 
-  const writeData: writeData = async (key: string, data: object) => {
+  const writeData: writeData = async (key: string, data: object, _ttl: number) => {
     const file = getFile(key)
     logger.debug('write data', file)
     try {
@@ -88,5 +89,5 @@ export const sessionFile: session = async (phone: string) => {
     }
   }
 
-  return { writeData, readData, removeData, getKey }
+  return { writeData, readData, removeData, getKey, extension }
 }
