@@ -124,9 +124,13 @@ export class IncomingJob {
     } else if (ok?.success) {
       logger.debug('Message id %s update to status %s', payload?.message_id, payload?.status)
       return
-    } else if (error && payload?.message_id && config.provider == 'forwarder') {
-      logger.warn('Failed message id %s update to status %s', payload?.message_id, payload?.status)
-      throw new Error(`Error on forwarder update status ${JSON.stringify(error)}`)
+    } else if (error && payload?.message_id && payload?.status && config.provider == 'forwarder') {
+      if (error.code == 100) {
+        logger.warn('Failed message id %s update to status %s', payload?.message_id, payload?.status)
+        return
+      } else {
+        throw new Error(`Error on forwarder update status ${JSON.stringify(error)}`)
+      }
     }
     let outgingPayload
     if (error) {
