@@ -15,5 +15,5 @@ export interface getKey {
 }
 
 export interface session {
-  (phone: string): Promise<{ writeData: writeData; readData: readData; removeData: removeData; getKey: getKey, extension }>
+  (phone: string): Promise<{ writeData: writeData; readData: readData; removeData: removeData; getKey: getKey, credsKey: string }>
 }

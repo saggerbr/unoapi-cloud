@@ -4,9 +4,9 @@ import logger from './logger'
 import { SESSION_KEY_TTL } from '../defaults'
 
 export const authState = async (session: session, phone: string) => {
-  const { readData, writeData, removeData, getKey, extension } = await session(phone)
+  const { readData, writeData, removeData, getKey, credsKey} = await session(phone)
 
-  const creds: AuthenticationCreds = ((await readData(`creds${extension}`)) || initAuthCreds()) as AuthenticationCreds
+  const creds: AuthenticationCreds = ((await readData(credsKey)) || initAuthCreds()) as AuthenticationCreds
 
   const keys = {
     get: async (type: string, ids: string[]) => {
@@ -33,7 +33,7 @@ export const authState = async (session: session, phone: string) => {
         for (const id in data[category]) {
           const value = data[category][id]
           const key = getKey(category, id)
-          tasks.push(value ? writeData(key, value, SESSION_KEY_TTL) : removeData(key || `creds${extension}`))
+          tasks.push(value ? writeData(key, value, SESSION_KEY_TTL) : removeData(key || credsKey))
         }
       }
       await Promise.all(tasks)
@@ -46,8 +46,7 @@ export const authState = async (session: session, phone: string) => {
   }
 
   const saveCreds: () => Promise<void> = async () => {
-    logger.debug('save creds %s', phone)
-    return await writeData(`creds${extension}`, creds, -1)
+    return await writeData(credsKey, creds, -1)
   }
 
   return {

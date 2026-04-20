@@ -5,8 +5,10 @@ import logger from './logger'
 
 export const sessionRedis: session = async (phone: string) => {
   const getKey: getKey = (type: string, id: string) => `${phone}:${type}-${id}`
+  const credsKey = `${phone}:creds`
 
   const writeData: writeData = async (key: string, data: object, ttl: number) => {
+    logger.debug('write data %s', key)
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return setAuth(key, data, ttl, (value: any) => JSON.stringify(value, BufferJSON.replacer))
@@ -17,6 +19,7 @@ export const sessionRedis: session = async (phone: string) => {
   }
 
   const readData: readData = async (key: string) => {
+    logger.debug('read data %s', key)
     try {
       return getAuth(key, (value: string) => {
         try {
@@ -33,6 +36,7 @@ export const sessionRedis: session = async (phone: string) => {
   }
 
   const removeData: removeData = async (key: string) => {
+    logger.debug('remove data %s', key)
     try {
       await delAuth(key)
     } catch (error) {
@@ -41,5 +45,5 @@ export const sessionRedis: session = async (phone: string) => {
     }
   }
 
-  return { writeData, getKey, removeData, readData, extension: '' }
+  return { writeData, getKey, removeData, readData, credsKey }
 }
