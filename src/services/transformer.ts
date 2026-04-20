@@ -1316,7 +1316,7 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
     logger.debug('fromBaileysMessageContent %s => %s', phone, JSON.stringify(data))
     return [data, senderPhone, senderId, chatJid]
   } catch (e) {
-    if ((e instanceof DecryptError)) {
+    if (!isDecryptError(e)) {
       logger.error(e, 'Error on convert baileys to cloud-api')
     }
     throw e

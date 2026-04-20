@@ -19,7 +19,7 @@ import {
 } from './defaults'
 import logger from './services/logger'
 import { version } from '../package.json'
-import { extractDestinyPhone } from './services/transformer'
+import { extractDestinyPhone, isDecryptError } from './services/transformer'
 
 const withTimeout = (millis, error, promise) => {
   let timeoutPid
@@ -319,7 +319,9 @@ export const amqpConsume = async (
       logger.debug('Ack message!')
       await channel?.ack(payload)
     } catch (error) {
-      logger.error(error, 'Error on consume %s', queue)
+      if (!isDecryptError(error)) {
+        logger.error(error, 'Error on consume %s', queue)
+      }
       if (countRetries >= maxRetries) {
         logger.info('Reject %s retries', countRetries)
         if (options.notifyFailedMessages) {
