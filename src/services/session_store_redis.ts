@@ -11,6 +11,7 @@ import {
   setConnectCount,
   delAuth,
   clearConnectCount,
+  getAuth,
 } from './redis'
 import logger from './logger'
 import { MAX_CONNECT_RETRY, MAX_CONNECT_TIME } from '../defaults'
@@ -93,7 +94,7 @@ export class SessionStoreRedis extends SessionStore {
     const aKey = authKey(`${phone}*`)
     const keys = await redisKeys(aKey)
     logger.info(`Found auth ${keys.length} keys for session ${phone}`)
-    if (keys.length == 1 && keys[0] == authKey(`${phone}:creds`)) {
+    if (keys.length == 0 || Object.keys((await getAuth(`${phone}:creds`))).length == 0) {  
       await delAuth(phone)
       await this.setStatus(phone, 'disconnected')
     }
