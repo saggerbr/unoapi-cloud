@@ -472,7 +472,7 @@ CONFIG_SESSION_PHONE_CLIENT=Unoapi Name that will be displayed on smartphone con
 CONFIG_SESSION_PHONE_NAME=Chrome Browser Name = Chrome | Firefox | Edge | Opera | Safari
 WHATSAPP_VERSION=Version of whatsapp, default to local Baileys version. Format is `[2, 3000, 1019810866]`
 VALIDATE_SESSION_NUMBER=validate the number in session and config is equals, default true
-OPENAI_API_KEY=openai api key to transcribe audio
+SEND_MESSAGE_ON_DECRYPT_ERROR=true send message on decrypt error to try sync keys and decrypt message
 ```
 
 Bucket env to config assets media compatible with S3, this config can't save in redis:
@@ -536,6 +536,7 @@ WEBHOOK_FORWARD_TOKEN=the token of whatsapp cloud api, default is empty
 WEBHOOK_FORWARD_VERSION=the version of whatsapp cloud api, default is v17.0
 WEBHOOK_FORWARD_URL=the url of whatsapp cloud api, default is https://graph.facebook.com
 WEBHOOK_FORWARD_TIMEOUT_MS=the timeout for request to whatsapp cloud api, default is 360000
+OPENAI_API_KEY=openai api key to transcribe audio
 ```
 
 ### Config session with redis

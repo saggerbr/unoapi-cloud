@@ -4,8 +4,8 @@ import { getConfig } from './config'
 import { OnNewLogin } from './socket'
 import { Listener } from './listener'
 import { Sync } from './sync'
-import { proto } from 'baileys'
 import { t } from '../i18n'
+import { SEND_MESSAGE_ON_DECRYPT_ERROR } from '../defaults'
 
 export class SyncBaileys implements Sync {
   private service: Listener
@@ -21,6 +21,10 @@ export class SyncBaileys implements Sync {
   }
 
   async process(phone, jids: string[]) {
+    if (!SEND_MESSAGE_ON_DECRYPT_ERROR) {
+      return true
+    }
+
     const client: Client = await this.getClient({
       phone,
       listener: this.service,
