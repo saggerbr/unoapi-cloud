@@ -94,7 +94,7 @@ export class SessionStoreRedis extends SessionStore {
     const aKey = authKey(`${phone}*`)
     const keys = await redisKeys(aKey)
     logger.info(`Found auth ${keys.length} keys for session ${phone}`)
-    if (keys.length == 0 || Object.keys((await getAuth(`${phone}:creds`))).length == 0) {  
+    if (keys.length == 0 || Object.keys((await getAuth(`${phone}:creds`)) || {}).length == 0) {  
       await delAuth(phone)
       await this.setStatus(phone, 'disconnected')
     }
