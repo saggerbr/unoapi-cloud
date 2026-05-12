@@ -1,11 +1,12 @@
-import { initAuthCreds, proto, AuthenticationState, AuthenticationCreds, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys'
+import { initAuthCreds, proto, AuthenticationState, AuthenticationCreds, makeCacheableSignalKeyStore } from 'baileys'
 import { session } from './session'
 import logger from './logger'
+import { SESSION_KEY_TTL } from '../defaults'
 
 export const authState = async (session: session, phone: string) => {
-  const { readData, writeData, removeData, getKey } = await session(phone)
+  const { readData, writeData, removeData, getKey, credsKey} = await session(phone)
 
-  const creds: AuthenticationCreds = ((await readData('')) || initAuthCreds()) as AuthenticationCreds
+  const creds: AuthenticationCreds = ((await readData(credsKey)) || initAuthCreds()) as AuthenticationCreds
 
   const keys = {
     get: async (type: string, ids: string[]) => {
@@ -16,7 +17,7 @@ export const authState = async (session: session, phone: string) => {
           const key = getKey(type, id)
           const value = await readData(key)
           if (type === 'app-state-sync-key' && value) {
-            data[id] = proto.Message.AppStateSyncKeyData.fromObject(value)
+            data[id] = proto.Message.AppStateSyncKeyData.create(value)
           } else {
             data[id] = value
           }
@@ -32,7 +33,7 @@ export const authState = async (session: session, phone: string) => {
         for (const id in data[category]) {
           const value = data[category][id]
           const key = getKey(category, id)
-          tasks.push(value ? writeData(key, value) : removeData(key))
+          tasks.push(value ? writeData(key, value, SESSION_KEY_TTL) : removeData(key || credsKey))
         }
       }
       await Promise.all(tasks)
@@ -45,8 +46,7 @@ export const authState = async (session: session, phone: string) => {
   }
 
   const saveCreds: () => Promise<void> = async () => {
-    logger.debug('save creds %s', phone)
-    return writeData('', creds)
+    return await writeData(credsKey, creds, -1)
   }
 
   return {

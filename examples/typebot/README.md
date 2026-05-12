@@ -55,7 +55,7 @@ To remove a phone number your black, send ttl with 0, with ttl -1, never expire
 
 ```sh
 curl -i -X POST \
-http://localhost:9876/Y/blacklist/W \
+'http://localhost:9876/Y/blacklist/W' \
 -H 'Content-Type: application/json' \
 -H 'Authorization: 1' \
 -d '{ 
@@ -63,3 +63,46 @@ http://localhost:9876/Y/blacklist/W \
   "to": "X"
 }'
 ```
+
+Or in url format
+```sh
+curl -i -X POST 'http://localhost:9876/5549988290955/blacklist/type?to=5549999621461&ttl=-1&access_token=1'
+```
+
+## Config unoapi to send message after a time without reply
+For exemplo, if your session number is Y and you want to send a message ? after 36000 milliseconds without reply to number X
+
+```sh
+curl -i -X POST \
+'http://localhost:9876/timer/Y/X' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: 1' \
+-d '{ 
+  "timeout": 36000,
+  "message": "?"
+}'
+```
+
+Or in url format
+```sh
+curl -i -X POST 'http://localhost:9876/timer/Y/X?timetout=360&message=hummm&access_token=1'
+```
+
+Where has a response, dont forgot remove the timer sending with
+
+```sh
+curl -i -X DELETE \
+'http://localhost:9876/timer/Y/X' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: 1'
+```
+
+
+curl -i -X POST \
+'http://localhost:9876/timer/554931978550/5549988290955' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: 1' \
+-d '{ 
+  "timeout": 1,
+  "message": "Oi, ainda está ai? =)"
+}'

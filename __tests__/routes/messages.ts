@@ -10,6 +10,8 @@ import { getStore, Store } from '../../src/services/store'
 import { SessionStore } from '../../src/services/session_store'
 import { OnNewLogin } from '../../src/services/socket'
 import { addToBlacklist } from '../../src/services/blacklist'
+import { Reload } from '../../src/services/reload'
+import { Logout } from '../../src/services/logout'
 const addToBlacklist = mock<addToBlacklist>()
 
 const sessionStore = mock<SessionStore>()
@@ -38,7 +40,9 @@ describe('messages routes', () => {
     outgoing = mock<Outgoing>()
     incoming = mock<Incoming>()
     const onNewLogin = mock<OnNewLogin>()
-    app = new App(incoming, outgoing, '', getConfigTest, sessionStore, onNewLogin, addToBlacklist)
+    const reload = mock<Reload>()
+    const logout = mock<Logout>()
+    app = new App(incoming, outgoing, '', getConfigTest, sessionStore, onNewLogin, addToBlacklist, reload, logout)
   })
 
   test('whatsapp with sucess', async () => {
@@ -48,7 +52,7 @@ describe('messages routes', () => {
     jest.spyOn(incoming, 'send').mockReturnValue(p)
     const res = await request(app.server).post(`/v15.0/${phone}/messages`).send(json)
     expect(res.status).toEqual(200)
-    expect(sendSpy).toHaveBeenCalledWith(phone, json, {})
+    expect(sendSpy).toHaveBeenCalledWith(phone, json, { endpoint: 'messages' })
   })
 
   test('whatsapp with 400 status', async () => {

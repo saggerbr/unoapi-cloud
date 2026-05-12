@@ -1,8 +1,9 @@
 import NodeCache from 'node-cache'
-import { amqpEnqueue } from '../amqp'
-import { UNOAPI_JOB_BLACKLIST_ADD } from '../defaults'
-import { blacklist, redisTtl, redisKeys } from './redis'
+import { amqpPublish } from '../amqp'
+import { UNOAPI_EXCHANGE_BROKER_NAME, UNOAPI_QUEUE_BLACKLIST_ADD } from '../defaults'
+import { blacklist, redisTtl, redisKeys, setBlacklist } from './redis'
 import logger from './logger'
+import { extractDestinyPhone } from './transformer'
 
 const DATA = new NodeCache()
 let searchData = true
@@ -13,33 +14,6 @@ export interface addToBlacklist {
 
 export interface isInBlacklist {
   (from: string, webhookId: string, payload: object): Promise<String>
-}
-
-export const extractDestinyPhone = (payload: object) => {
-  const data = payload as any
-  const number = data?.to || (
-    (
-      data.entry
-      && data.entry[0]
-      && data.entry[0].changes
-      && data.entry[0].changes[0]
-      && data.entry[0].changes[0].value
-    ) && (
-      (
-        data.entry[0].changes[0].value.contacts
-        && data.entry[0].changes[0].value.contacts[0]
-        && data.entry[0].changes[0].value.contacts[0].wa_id?.replace('+', '')
-      ) || (
-        data.entry[0].changes[0].value.statuses
-        && data.entry[0].changes[0].value.statuses[0]
-        && data.entry[0].changes[0].value.statuses[0].recipient_id?.replace('+', '')
-      )
-    )
-  )
-  if (!number) {
-    throw Error(`error on get phone number from ${JSON.stringify(payload)}`)
-  }
-  return number
 }
 
 export const blacklistInMemory = (from: string, webhookId: string, to: string) => {
@@ -78,9 +52,9 @@ export const isInBlacklistInRedis: isInBlacklist = async (from: string, webhookI
     const pattern = `${blacklist('', '', '').replaceAll('::', '')}*`
     const keys = await redisKeys(pattern)
     logger.info(`Load ${keys.length} items in blacklist`)
-    const promises = keys.map(async key => {
+    const promises = keys.map(async (key) => {
       const ttl = await redisTtl(key)
-      const [ _k, from, webhookId, to ] = key.split(':')
+      const [_k, from, webhookId, to] = key.split(':')
       return addToBlacklistInMemory(from, webhookId, to, ttl)
     })
     await Promise.all(promises)
@@ -88,7 +62,13 @@ export const isInBlacklistInRedis: isInBlacklist = async (from: string, webhookI
   return isInBlacklistInMemory(from, webhookId, payload)
 }
 
+export const addToBlacklistRedis: addToBlacklist = async (from: string, webhookId: string, to: string, ttl: number) => {
+  await setBlacklist(from, webhookId, to, ttl)
+  await addToBlacklistInMemory(from, webhookId, to, ttl)
+  return true
+}
+
 export const addToBlacklistJob: addToBlacklist = async (from: string, webhookId: string, to: string, ttl: number) => {
-  await amqpEnqueue(UNOAPI_JOB_BLACKLIST_ADD, from, { from, webhookId, to, ttl })
+  await amqpPublish(UNOAPI_EXCHANGE_BROKER_NAME, UNOAPI_QUEUE_BLACKLIST_ADD, from, { from, webhookId, to, ttl }, { type: 'topic' })
   return true
 }

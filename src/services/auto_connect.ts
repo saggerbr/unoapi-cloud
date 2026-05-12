@@ -2,14 +2,12 @@ import { getClient, ConnectionInProgress } from './client'
 import { getConfig } from './config'
 import { SessionStore } from './session_store'
 import { Listener } from './listener'
-import { Incoming } from './incoming'
 import { OnNewLogin } from './socket'
 import logger from './logger'
 import { UNOAPI_SERVER_NAME } from '../defaults'
 
 export const autoConnect = async (
   sessionStore: SessionStore,
-  incoming: Incoming,
   listener: Listener,
   getConfig: getConfig,
   getClient: getClient,
@@ -22,17 +20,28 @@ export const autoConnect = async (
       const phone = phones[i]
       try {
         const config = await getConfig(phone)
-        if (config.provider !== 'baileys') {
-          logger.info(`Ignore connecting phone ${phone} is not provider baileys...`)
-          continue;
+        if (config.provider && !['forwarder', 'baileys'].includes(config.provider)) {
+          logger.info(`Ignore connecting phone ${phone} provider ${config.provider}...`)
+          continue
         }
-        if (config.server !== UNOAPI_SERVER_NAME) {
+        if (config.server && config.server !== UNOAPI_SERVER_NAME) {
           logger.info(`Ignore connecting phone ${phone} server ${config.server} is not server current server ${UNOAPI_SERVER_NAME}...`)
-          continue;
+          continue
+        }
+        await sessionStore.syncConnection(phone)
+        if (await sessionStore.isStatusStandBy(phone)) {
+          logger.info(`Session standby ${phone}...`)
+          continue
         }
         logger.info(`Auto connecting phone ${phone}...`)
         try {
-          getClient({ phone, incoming, listener, getConfig, onNewLogin })
+          const store = await config.getStore(phone, config)
+          const { sessionStore } = store
+          if ((await sessionStore.isStatusConnecting(phone)) || (await sessionStore.isStatusOnline(phone))) {
+            logger.info(`Update session status to auto connect ${phone}...`)
+            await sessionStore.setStatus(phone, 'offline')
+          }
+          getClient({ phone, listener, getConfig, onNewLogin })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
           if (e instanceof ConnectionInProgress) {

@@ -6,4 +6,8 @@ coverage/*
 data/medias/*
 data/stores/*
 data/sessions/*
-./.env
+data/logs/*
+.env
+.yarn/*
+.yarnrc.yml
+.vscode/

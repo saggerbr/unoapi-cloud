@@ -1,10 +1,22 @@
-import { UNOAPI_SERVER_NAME } from '../defaults'
 import { getStore } from './store'
 import { getStoreFile } from './store_file'
-import { WAMessageKey } from '@whiskeysockets/baileys'
+import { WAMessageKey, WAVersion } from 'baileys'
 import { Level } from 'pino'
 
+// customUploadHosts: [
+//   { hostname: 'media.fcgh28-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.fgru11-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.fsdu2-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.frao1-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.fcgh20-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.fpoa33-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'media.fbel2-1.fna.whatsapp.net', maxContentLengthBytes: NaN },
+//   { hostname: 'mmg.whatsapp.net', maxContentLengthBytes: NaN } 
+// ]
+
 export const configs: Map<string, Config> = new Map()
+
+export type connectionType = 'qrcode' | 'pairing_code' | 'forward'
 
 export interface GetMessageMetadata {
   <T>(message: T): Promise<T>
@@ -13,19 +25,39 @@ export interface GetMessageMetadata {
 export const getMessageMetadataDefault: GetMessageMetadata = async <T>(data: T) => data
 
 export type Webhook = {
-  id: string,
+  id: string
   url: string
   urlAbsolute: string
   token: string
   header: string
   timeoutMs: number
   sendNewMessages: boolean
+  sendUpdateMessages: boolean
+  sendGroupMessages: boolean
+  sendOutgoingMessages: boolean
+  sendNewsletterMessages: boolean
+  sendIncomingMessages: boolean
+  sendTranscribeAudio: boolean
+  addToBlackListOnOutgoingMessageWithTtl: number | undefined
+}
+
+export type WebhookForward = {
+  url: string
+  phoneNumberId: string
+  businessAccountId: string
+  token: string
+  version: string
+  timeoutMs: number
 }
 
 export type Config = {
+  outgoingMessagesCoex: boolean | undefined
+  groupMessagesCloudFormat: boolean | undefined
   ignoreGroupMessages: boolean
+  ignoreNewsletterMessages: boolean
   ignoreBroadcastMessages: boolean
   ignoreBroadcastStatuses: boolean
+  readOnReceipt: boolean
   ignoreHistoryMessages: boolean
   ignoreYourselfMessages: boolean
   ignoreOwnMessages: boolean
@@ -46,21 +78,42 @@ export type Config = {
   getStore: getStore
   baseStore: string
   webhooks: Webhook[]
+  webhookForward: WebhookForward | Partial<WebhookForward>
   logLevel: Level
   getMessageMetadata: GetMessageMetadata
   ignoreDataStore: boolean
   sendReactionAsReply: boolean
   sendProfilePicture: boolean
   authToken: string | undefined
-  authHeader: string | undefined,
-  provider: 'baileys',
-  server:  string | undefined,
+  authHeader: string | undefined
+  provider: 'baileys' | 'forwarder' | undefined
+  server: string | undefined
+  connectionType: connectionType
+  wavoipToken: string | undefined
+  useRedis: boolean
+  useS3: boolean
+  qrTimeoutMs: number
+  label: string
+  overrideWebhooks: boolean
+  customMessageCharacters: string[]
+  customMessageCharactersFunction: (message: string) => string
+  whatsappVersion: WAVersion | undefined
+  openaiApiKey: string | undefined
+  openaiApiTranscribeModel: string | undefined
+  openaiAssistantId: string | undefined
+  openaiApiSpeechVoice: string | undefined
+  openaiApiSpeechModel: string | undefined
+  openaiBaseUrl: string | undefined
 }
 
 export const defaultConfig: Config = {
+  groupMessagesCloudFormat: false,
+  outgoingMessagesCoex: false,
   ignoreGroupMessages: true,
+  ignoreNewsletterMessages: true,
   ignoreBroadcastStatuses: true,
   ignoreBroadcastMessages: false,
+  readOnReceipt: false,
   ignoreHistoryMessages: true,
   ignoreOwnMessages: true,
   ignoreYourselfMessages: true,
@@ -91,8 +144,16 @@ export const defaultConfig: Config = {
       header: '',
       timeoutMs: 5_000,
       sendNewMessages: false,
+      sendNewsletterMessages: false,
+      sendGroupMessages: true,
+      sendOutgoingMessages: true,
+      sendUpdateMessages: true,
+      sendIncomingMessages: true,
+      sendTranscribeAudio: false,
+      addToBlackListOnOutgoingMessageWithTtl: undefined,
     },
   ],
+  webhookForward: {},
   getMessageMetadata: getMessageMetadataDefault,
   ignoreDataStore: false,
   sendReactionAsReply: false,
@@ -100,8 +161,24 @@ export const defaultConfig: Config = {
   proxyUrl: undefined,
   authToken: undefined,
   authHeader: undefined,
-  provider: 'baileys',
-  server: UNOAPI_SERVER_NAME,
+  provider: undefined,
+  server: undefined,
+  connectionType: 'qrcode',
+  wavoipToken: '',
+  useRedis: false,
+  useS3: false,
+  qrTimeoutMs: 60000,
+  label: '',
+  overrideWebhooks: false,
+  customMessageCharacters: [],
+  customMessageCharactersFunction: (message: string) => message,
+  whatsappVersion: undefined,
+  openaiApiKey: undefined,
+  openaiApiTranscribeModel: undefined,
+  openaiAssistantId: undefined,
+  openaiApiSpeechVoice: undefined,
+  openaiApiSpeechModel: undefined,
+  openaiBaseUrl: undefined
 }
 
 export interface getConfig {

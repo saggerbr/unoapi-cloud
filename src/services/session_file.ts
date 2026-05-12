@@ -1,11 +1,11 @@
-import { BufferJSON } from '@whiskeysockets/baileys'
+import { BufferJSON } from 'baileys'
 import { rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
 import { session, writeData, readData, removeData, getKey } from './session'
 import logger from './logger'
 
 export const sessionFile: session = async (phone: string) => {
-  const getKey: getKey = (type: string, id: string) => `/${type}-${id}.json`
-  const getFile = (key: string) => `${phone}${key ? key : '/creds.json'}`.replace('/.', '')
+  const credsKey = `${phone}/creds.json`.replace('/.', '')
+  const getKey: getKey = (type: string, id: string) => `${phone}/${type}-${id}.json`.replace('/.', '')
 
   if (!existsSync(phone)) {
     mkdirSync(phone, { recursive: true })
@@ -46,12 +46,11 @@ export const sessionFile: session = async (phone: string) => {
     }
   }
 
-  const writeData: writeData = async (key: string, data: object) => {
-    const file = getFile(key)
-    logger.debug('write data', file)
+  const writeData: writeData = async (key: string, data: object, _ttl: number) => {
+    logger.debug('write data', key)
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return setAuth(file, data, (value: any) => JSON.stringify(value, BufferJSON.replacer))
+      return setAuth(key, data, (value: any) => JSON.stringify(value, BufferJSON.replacer))
     } catch (error) {
       logger.error(error, 'Error on write auth')
       throw error
@@ -59,10 +58,9 @@ export const sessionFile: session = async (phone: string) => {
   }
 
   const readData: readData = async (key: string) => {
-    const file = getFile(key)
-    logger.debug('read data %s', file)
+    logger.debug('read data %s', key)
     try {
-      return getAuth(file, (value: string) => {
+      return getAuth(key, (value: string) => {
         try {
           return value ? JSON.parse(value, BufferJSON.reviver) : undefined
         } catch (error) {
@@ -77,16 +75,14 @@ export const sessionFile: session = async (phone: string) => {
   }
 
   const removeData: removeData = async (key: string) => {
-    const file = getFile(key)
-    logger.debug('read data', file)
-    logger.debug('remove data', file)
+    logger.debug('remove data', key)
     try {
-      await delAuth(file)
+      await delAuth(key)
     } catch (error) {
       logger.error(error, 'Error on remove auth')
       throw error
     }
   }
 
-  return { writeData, readData, removeData, getKey }
+  return { writeData, readData, removeData, getKey, credsKey }
 }

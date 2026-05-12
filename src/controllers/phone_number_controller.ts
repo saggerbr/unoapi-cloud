@@ -1,7 +1,9 @@
 import { Request, Response } from 'express'
-import { Config, getConfig } from '../services/config'
-import { SessionStore, getSessionStatus } from '../services/session_store'
+import { getConfig } from '../services/config'
+import { SessionStore } from '../services/session_store'
 import logger from '../services/logger'
+import { getAuthHeaderToken } from '../services/security'
+import { UNOAPI_AUTH_TOKEN } from '../defaults'
 
 export class PhoneNumberController {
   private getConfig: getConfig
@@ -18,12 +20,18 @@ export class PhoneNumberController {
     logger.debug('phone number get params %s', JSON.stringify(req.params))
     logger.debug('phone number get body %s', JSON.stringify(req.body))
     logger.debug('phone number get query', JSON.stringify(req.query))
-    const { phone } = req.params
     try {
-      const config: Config = await this.getConfig(phone)
+      const { phone } = req.params
+      const config = await this.getConfig(phone)
+      const store = await config.getStore(phone, config)
+      logger.debug('Session store retrieved!')
+      const { sessionStore } = store
+      const templates = await store.dataStore.loadTemplates()
+      logger.debug('Templates retrieved!')
       return res.status(200).json({
-        display_phone_number: phone,
-        status: await getSessionStatus(phone),
+        display_phone_number: phone.replace('+', ''),
+        status: await sessionStore.getStatus(phone),
+        message_templates: { data: templates },
         ...config,
       })
     } catch (e) {
@@ -37,6 +45,7 @@ export class PhoneNumberController {
     logger.debug('phone number list params %s', JSON.stringify(req.params))
     logger.debug('phone number list body %s', JSON.stringify(req.body))
     logger.debug('phone number list query', JSON.stringify(req.query))
+    const token = getAuthHeaderToken(req)
     try {
       const phones = await this.sessionStore.getPhones()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,9 +53,15 @@ export class PhoneNumberController {
       for (let i = 0, j = phones.length; i < j; i++) {
         const phone = phones[i]
         const config = await this.getConfig(phone)
-        configs.push({ ...config, display_phone_number: phone, status: await getSessionStatus(phone) })
+        const store = await config.getStore(phone, config)
+        const { sessionStore } = store
+        const status = config.provider == 'forwarder' ? 'forwarder' : await sessionStore.getStatus(phone)
+        if ([UNOAPI_AUTH_TOKEN, config.authToken].includes(token)) {
+          configs.push({ ...config, display_phone_number: phone.replace('+', ''), status })
+        }
       }
-      return res.status(200).json(configs)
+      logger.debug('Configs retrieved!')
+      return res.status(200).json({ data: configs })
     } catch (e) {
       return res.status(500).json({ status: 'error', message: e.message })
     }

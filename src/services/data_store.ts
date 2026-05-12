@@ -1,4 +1,4 @@
-import { GroupMetadata, makeInMemoryStore, WAMessage, WAMessageKey, WASocket } from '@whiskeysockets/baileys'
+import { AuthenticationState, GroupMetadata, useMultiFileAuthState, WAMessage, WAMessageKey, WASocket } from 'baileys'
 import { Config } from './config'
 
 export const dataStores: Map<string, DataStore> = new Map()
@@ -7,10 +7,38 @@ export interface getDataStore {
   (phone: string, config: Config): Promise<DataStore>
 }
 
-export type DataStore = ReturnType<typeof makeInMemoryStore> & {
+export type MessageStatus =
+  | 'scheduled'
+  | 'pending'
+  | 'without-whatsapp'
+  | 'invalid-phone-number'
+  | 'error'
+  | 'failed'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'played'
+  | 'accepted'
+  | 'deleted'
+  | 'decrypted'
+  | 'decryption_failed'
+
+export type MessageDirection = 'incoming' | 'outgoing'
+
+export type DataStore = {
+  state: AuthenticationState
+  saveCreds: () => Promise<void>
+  type: string
   loadKey: (id: string) => Promise<WAMessageKey | undefined>
   setKey: (id: string, key: WAMessageKey) => Promise<void>
+  writeToFile: (path: string) => void
+  readFromFile: (path: string) => any
+  toJSON: () => any
+  fromJSON: (json: any) => void
+  loadMessage: (jid: string, id: string) => Promise<any | undefined>
   setUnoId: (id: string, unoId: string) => Promise<void>
+  setMediaPayload: (id: string, payload: any) => Promise<void>
+  loadMediaPayload: (id: string) => Promise<any>
   setImageUrl: (jid: string, url: string) => Promise<void>
   getImageUrl: (jid: string) => Promise<string | undefined>
   loadImageUrl: (jid: string, sock: Partial<WASocket>) => Promise<string | undefined>
@@ -18,28 +46,17 @@ export type DataStore = ReturnType<typeof makeInMemoryStore> & {
   getGroupMetada: (jid: string) => Promise<GroupMetadata | undefined>
   loadGroupMetada: (jid: string, sock: Partial<WASocket>) => Promise<GroupMetadata | undefined>
   loadUnoId: (id: string) => Promise<string | undefined>
-  setStatus: (
-    id: string,
-    status:
-      | 'scheduled'
-      | 'pending'
-      | 'without-whatsapp'
-      | 'invalid-phone-number'
-      | 'error'
-      | 'failed'
-      | 'sent'
-      | 'delivered'
-      | 'read'
-      | 'played'
-      | 'accepted'
-      | 'deleted',
-  ) => Promise<void>
-  loadStatus: (id: string) => Promise<string | undefined>
-  getJid: (phone: string, sock: WASocket) => Promise<string | undefined>
-  loadJid: (phone: string) => Promise<string | undefined>
+  setStatus: (id: string, status: MessageStatus) => Promise<void>
+  loadStatus: (id: string) => Promise<MessageStatus | undefined>
+  setLastMessageDirection: (phone: string, status: MessageDirection) => Promise<void>
+  loadLastMessageDirection: (phone: string) => Promise<MessageDirection | undefined>
+  getJid: (phone: string) => Promise<string | undefined>
+  loadJid: (phone: string, sock: WASocket) => Promise<string | undefined>
+  getAllJid: () => Promise<string[]>
   setJid: (phone: string, jid: string) => Promise<void>
+  setJidIfNotFound: (phone: string, jid: string) => Promise<void>
   setMessage: (jid: string, message: WAMessage) => Promise<void>
-  cleanSession: () => Promise<void>
+  cleanSession: (removeConfig: boolean) => Promise<void>
   loadTemplates(): Promise<object[]>
   setTemplates(templates: string): Promise<void>
 }

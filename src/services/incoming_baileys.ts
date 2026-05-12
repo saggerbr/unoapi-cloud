@@ -21,12 +21,30 @@ export class IncomingBaileys implements Incoming {
   public async send(phone: string, payload: object, options: object) {
     const client: Client = await this.getClient({
       phone,
-      incoming: this,
       listener: this.service,
       getConfig: this.getConfig,
       onNewLogin: this.onNewLogin,
     })
-    logger.debug('Retrieved client baileys %s', phone)
-    return client.send(payload, options)
+    if (!client) {
+      throw 'Disconnected Client ' + phone
+    }
+    logger.debug('Retrieved client for %s', phone)
+    const to = payload['to'] || ''
+    if (to.endsWith('@broadcast')) {
+      options['broadcast'] = true
+      const config = await this.getConfig(phone)
+      const { dataStore } = await config.getStore(phone, config)
+      const jids = await dataStore.getAllJid()
+      logger.debug('Publish storie for %s contacts: %s', jids.length, JSON.stringify(jids))
+      options['statusJidList'] = jids
+    }
+    logger.debug('Send message options %s', JSON.stringify(options))
+    const resp = await client.send(payload, options)
+    if (to) {
+      const config = await this.getConfig(phone)
+      const { dataStore } = await config.getStore(phone, config)
+      await dataStore.setLastMessageDirection(to, 'incoming')
+    }
+    return resp
   }
 }

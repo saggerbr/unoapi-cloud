@@ -1,11 +1,30 @@
-import { AnyMessageContent, WAMessage, isJidUser, normalizeMessageContent, proto } from '@whiskeysockets/baileys'
+import { AnyMessageContent, WAMessageContent, WAMessage, isJidNewsletter, isLidUser, proto, isJidGroup } from 'baileys'
 import mime from 'mime-types'
 import { parsePhoneNumber } from 'awesome-phonenumber'
 import vCard from 'vcf'
 import logger from './logger'
 import { Config } from './config'
+import { MESSAGE_CHECK_WAAPP, SEND_AUDIO_MESSAGE_AS_PTT, UNOAPI_NATIVE_FLOW_BUTTONS } from '../defaults'
+import { t } from '../i18n'
 
-export const TYPE_MESSAGES_TO_PROCESS_FILE = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage']
+export const TYPE_MESSAGES_TO_PROCESS_FILE = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage', 'ptvMessage']
+
+export const TYPE_MESSAGES_MEDIA = ['image', 'audio', 'document', 'video', 'sticker']
+
+const MESSAGE_STUB_TYPE_ERRORS = [
+  'Message absent from node'.toLowerCase(),
+  'Invalid PreKey ID'.toLowerCase(),
+  'Key used already or never filled'.toLowerCase(),
+  'No SenderKeyRecord found for decryption'.toLowerCase(),
+  'No session record'.toLowerCase(),
+  'No matching sessions found for message'.toLowerCase(),
+  'No sender key for'.toLowerCase(),
+  'Cannot create property'.toLowerCase(),
+  'Bad MAC'.toLowerCase(),
+  'failed to decrypt message'.toLowerCase(),
+  'SessionError'.toLowerCase(),
+  'No session found to decrypt message'.toLowerCase(),
+]
 
 export class BindTemplateError extends Error {
   constructor() {
@@ -15,23 +34,39 @@ export class BindTemplateError extends Error {
 
 export class DecryptError extends Error {
   private content: object
+  private messageId: string
 
-  constructor(content: object) {
+  constructor(content: object, messageId) {
     super('')
     this.content = content
+    this.messageId = messageId
   }
 
   getContent() {
     return this.content
   }
+
+  getMessageId() {
+    return this.messageId
+  }
 }
 
-const TYPE_MESSAGES_TO_PROCESS = [
+export const isDecryptError = (error: Error): error is DecryptError => {
+  return error instanceof DecryptError
+}
+
+export const isBindTemplateError = (error: Error): error is BindTemplateError => {
+  return error instanceof BindTemplateError
+}
+
+export const TYPE_MESSAGES_TO_READ = [
   'viewOnceMessage',
   'editedMessage',
   'ephemeralMessage',
   'documentWithCaptionMessage',
   'viewOnceMessageV2',
+  'viewOnceMessageV2Extension',
+  'lottieStickerMessage',
   'imageMessage',
   'videoMessage',
   'audioMessage',
@@ -45,11 +80,57 @@ const TYPE_MESSAGES_TO_PROCESS = [
   'liveLocationMessage',
   'listResponseMessage',
   'conversation',
-  'protocolMessage',
-  'senderKeyDistributionMessage',
-  'messageContextInfo',
-  'messageStubType',
+  'ptvMessage',
+  'templateButtonReplyMessage',
+  'listMessage',
+  'buttonsMessage',
+  'buttonsResponseMessage',
+  'interactiveMessage',
+  'nativeFlowMessage',
+  // 'templateMessage'
 ]
+
+const OTHER_MESSAGES_TO_PROCESS = ['protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'messageStubType']
+
+export const getMimetype = (payload: any) => {
+  const { type } = payload
+  const link = payload[type].link
+
+  let mimetype: string | boolean = mime.lookup(link.split('?')[0])
+  if (!mimetype) {
+    let url
+    try {
+      url = new URL(link)
+    } catch (error) {
+      logger.error(`Error on parse url: ${link}`)
+    }
+    if (url) {
+      mimetype = url.searchParams.get('response-content-type')
+      if (!mimetype) {
+        const contentDisposition = url.searchParams.get('response-content-disposition')
+        if (contentDisposition) {
+          const filename = contentDisposition.split('filename=')[1].split(';')[0]
+          if (filename) {
+            mimetype = mime.lookup(filename)
+          }
+        }
+      }
+    }
+  }
+  if (type == 'audio') {
+    if (mimetype == 'audio/ogg') {
+      mimetype = 'audio/ogg; codecs=opus'
+    } else if (!mimetype) {
+      mimetype = 'audio/mpeg'
+    }
+  }
+  if (payload[type].filename) {
+    if (!mimetype) {
+      mimetype = mime.lookup(payload[type].filename)
+    }
+  }
+  return mimetype ? `${mimetype}` : 'application/unknown'
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const getMessageType = (payload: any) => {
@@ -61,7 +142,8 @@ export const getMessageType = (payload: any) => {
     return 'receipt'
   } else if (payload.message) {
     const { message } = payload
-    return TYPE_MESSAGES_TO_PROCESS.find((t) => message[t]) || Object.keys(payload.message)[0]
+
+    return TYPE_MESSAGES_TO_READ.find((t) => message[t]) || OTHER_MESSAGES_TO_PROCESS.find((t) => message[t]) || Object.keys(payload.message)[0]
   } else if (payload.messageStubType) {
     return 'messageStubType'
   }
@@ -71,6 +153,19 @@ export const isSaveMedia = (message: WAMessage) => {
   const normalizedMessage = getNormalizedMessage(message)
   const messageType = normalizedMessage && getMessageType(normalizedMessage)
   return messageType && TYPE_MESSAGES_TO_PROCESS_FILE.includes(messageType)
+}
+
+export const normalizeMessageContent = (content: WAMessageContent | null | undefined): WAMessageContent | undefined => {
+  content =
+    content?.ephemeralMessage?.message?.viewOnceMessage?.message ||
+    content?.ephemeralMessage?.message ||
+    content?.viewOnceMessage?.message ||
+    content?.viewOnceMessageV2Extension?.message ||
+    content?.viewOnceMessageV2?.message ||
+    content?.documentWithCaptionMessage?.message ||
+    content ||
+    undefined
+  return content
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,6 +183,8 @@ export const getNormalizedMessage = (waMessage: WAMessage): WAMessage | undefine
     let { message } = binMessage
     if (message.editedMessage) {
       message = message.protocolMessage?.editedMessage
+    } else if (message.protocolMessage?.editedMessage) {
+      message = message.protocolMessage?.editedMessage
     }
     return { key: waMessage.key, message: { [binMessage.messageType]: message } }
   }
@@ -104,8 +201,8 @@ export const completeCloudApiWebHook = (phone, to: string, message: object) => {
             value: {
               messaging_product: 'whatsapp',
               metadata: {
-                display_phone_number: phone,
-                phone_number_id: phone,
+                display_phone_number: phone.replace('+', ''),
+                phone_number_id: phone.replace('+', ''),
               },
               messages: [message],
               contacts: [
@@ -128,88 +225,281 @@ export const completeCloudApiWebHook = (phone, to: string, message: object) => {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const toBaileysMessageContent = (payload: any): AnyMessageContent => {
+export const toBaileysMessageContent = (payload: any, customMessageCharactersFunction = (m) => m): AnyMessageContent => {
   const { type } = payload
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response: any = {}
   switch (type) {
     case 'text':
-      response.text = payload.text.body
+      response.text = customMessageCharactersFunction(payload.text.body)
       break
     case 'interactive':
-      let listMessage = {}
-      if (payload.interactive.header) {
-        listMessage = {
-          title: payload.interactive.header.text,
-          description: payload.interactive.body.text,
-          buttonText: payload.interactive.action.button,
-          footerText: payload.interactive.footer.text,
-          sections: payload.interactive.action.sections.map(
-            (section: { title: string; rows: { title: string; rowId: string; description: string }[] }) => {
+      // Build payload according to whaileys / baileys interactive format
+      // If there are sections -> build a list message (title, buttonText, sections)
+      // If there are action.buttons -> build a buttons message (text, footer, buttons)
+      const interactive = payload.interactive || {}
+      const action = interactive.action || {}
+      const header = interactive.header || {}
+      const body = interactive.body || {}
+      const footer = interactive.footer || {}
+
+      // Support header multimedia: if header.type is image/video/document/audio
+      if (header.type && header.type !== 'text') {
+        const mediaType = header.type
+        const mediaObj = header[mediaType] || {}
+        const link = mediaObj.link || mediaObj.url
+        if (link) {
+          // attach media to top-level (baileys accepts e.g. { image: { url } })
+          response[mediaType] = { url: link }
+          if (mediaObj.filename) {
+            response.fileName = mediaObj.filename
+          }
+          try {
+            const tmpPayload: any = { type: mediaType }
+            tmpPayload[mediaType] = { link }
+            const mimetype = getMimetype(tmpPayload)
+            if (mimetype) response.mimetype = mimetype
+          } catch (e) {
+            // ignore mimetype detection errors
+          }
+        }
+      }
+
+      // If sections are present, produce a list-style payload expected by baileys
+      if (action.sections && Array.isArray(action.sections) && action.sections.length > 0) {
+        response.text = body.text || ''
+        response.footer = footer.text || ''
+        response.title = header.text || ''
+        response.buttonText = action.button || 'Selecione'
+        response.sections = action.sections.map((section: any) => ({
+          title: section.title || '',
+          rows: (section.rows || []).map((row: any) => ({
+            rowId: row.rowId || row.id || '',
+            title: row.title || '',
+            description: row.description || '',
+          })),
+        }))
+      } else if (action.buttons && Array.isArray(action.buttons) && action.buttons.length > 0) {
+        // When native flow buttons are disabled, fall back to classic buttonsMessage
+        if (!UNOAPI_NATIVE_FLOW_BUTTONS) {
+          response.text = body.text || action.text || ''
+          response.footer = footer.text || ''
+          response.buttons = action.buttons.map((button: any) => {
+            // Quick reply style
+            if (button.reply || button.type === 'reply' || button.type === 'quick_reply') {
+              const reply = button.reply || button
+              const id = reply.id || reply.buttonId || ''
+              const title = reply.title || reply.displayText || reply.buttonText || ''
               return {
-                title: section.title,
-                rows: section.rows.map((row: { title: string; rowId: string; description: string }) => {
-                  return {
-                    title: row.title,
-                    rowId: row.rowId,
-                    description: row.description,
-                  }
+                buttonId: id,
+                buttonText: { displayText: title },
+                type: 1,
+              }
+            }
+
+            // URL / link button
+            if (button.url || button.type === 'url' || button.type === 'cta_url') {
+              const urlObj = button.url || button
+              const link = urlObj.link || urlObj.url || ''
+              const title = urlObj.title || urlObj.displayText || link || 'Abrir'
+              return {
+                buttonId: link || '',
+                buttonText: { displayText: title },
+                type: 1,
+              }
+            }
+
+            // Call button
+            if (button.call || button.type === 'call' || button.type === 'cta_call') {
+              const callObj = button.call || button
+              const phone = callObj.phone_number || callObj.phone || ''
+              const title = callObj.title || `Ligar ${phone}`
+              return {
+                buttonId: `call:${phone}`,
+                buttonText: { displayText: title },
+                type: 1,
+              }
+            }
+
+            // Copy code button (e.g. PIX) - fallback to quick reply behavior
+            if (button.copy_code || button.type === 'copy_code' || button.type === 'cta_copy') {
+              const copy = button.copy_code || button
+              const id = copy.id || ''
+              const title = copy.title || copy.displayText || 'Copiar código'
+              return {
+                buttonId: id,
+                buttonText: { displayText: title },
+                type: 1,
+              }
+            }
+
+            // Fallback: treat as quick reply
+            const reply = button.reply || button
+            const id = reply.id || reply.buttonId || ''
+            const title = reply.title || reply.displayText || reply.buttonText || ''
+            return {
+              buttonId: id,
+              buttonText: { displayText: title },
+              type: 1,
+            }
+          })
+        } else {
+          // Build native flow interactive message (whaileys)
+          const buttons = action.buttons.map((button: any) => {
+            // Quick reply style
+            if (button.reply || button.type === 'reply' || button.type === 'quick_reply') {
+              const reply = button.reply || button
+              const id = reply.id || reply.buttonId || ''
+              const title = reply.title || reply.displayText || reply.buttonText || ''
+              return {
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({
+                  id,
+                  display_text: title,
                 }),
               }
+            }
+
+            // URL / link button
+            if (button.url || button.type === 'url' || button.type === 'cta_url') {
+              const urlObj = button.url || button
+              const link = urlObj.link || urlObj.url || ''
+              const title = urlObj.title || urlObj.displayText || link || 'Abrir'
+              return {
+                name: 'cta_url',
+                buttonParamsJson: JSON.stringify({
+                  display_text: title,
+                  url: link,
+                }),
+              }
+            }
+
+            // Call button
+            if (button.call || button.type === 'call' || button.type === 'cta_call') {
+              const callObj = button.call || button
+              const phone = callObj.phone_number || callObj.phone || ''
+              const title = callObj.title || `Ligar ${phone}`
+              return {
+                name: 'cta_call',
+                buttonParamsJson: JSON.stringify({
+                  display_text: title,
+                  phone_number: phone,
+                }),
+              }
+            }
+
+            // Copy code button (e.g. PIX)
+            if (button.copy_code || button.type === 'copy_code' || button.type === 'cta_copy') {
+              const copy = button.copy_code || button
+              const code = copy.code || copy.copy_code || ''
+              const title = copy.title || copy.displayText || 'Copiar código'
+              return {
+                name: 'cta_copy',
+                buttonParamsJson: JSON.stringify({
+                  id: copy.id || '',
+                  display_text: title,
+                  copy_code: code,
+                }),
+              }
+            }
+
+            // Fallback: treat as quick reply
+            const reply = button.reply || button
+            const id = reply.id || reply.buttonId || ''
+            const title = reply.title || reply.displayText || reply.buttonText || ''
+            return {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                id,
+                display_text: title,
+              }),
+            }
+          })
+          response.interactiveMessage = {
+            body: { text: body.text || action.text || '' },
+            footer: footer.text ? { text: footer.text } : undefined,
+            header: {
+              title: header.title || header.text || '',
+              subtitle: header.subtitle || '',
+              hasMediaAttachment: false,
+              // 4 = text header (native flow)
+              type: 4,
             },
-          ),
-          listType: 2,
+            nativeFlowMessage: {
+              buttons,
+            },
+          }
         }
       } else {
-        listMessage = {
-          title: '',
-          description: payload.interactive.body.text || 'Nenhuma descriçao encontrada',
-          buttonText: 'Selecione',
-          footerText: '',
-          sections: [
-            {
-              title: 'Opcões',
-              rows: payload.interactive.action.buttons.map((button: { reply: { title: string; id: string; description: string } }) => {
-                return {
-                  title: button.reply.title,
-                  rowId: button.reply.id,
-                  description: '',
-                }
-              }),
-            },
-          ],
+        // Fallback: keep previous listMessage behaviour as a compatibility layer
+        const sections = action.sections
+          ? action.sections.map((section: any) => ({
+              title: section.title || '',
+              rows: (section.rows || []).map((row: any) => ({
+                title: row.title || '',
+                rowId: row.rowId || row.id || '',
+                description: row.description || '',
+              })),
+            }))
+          : [
+              {
+                title: 'Opções',
+                rows: (action.buttons || []).map((button: any) => ({
+                  title: button.reply?.title || button.title || '',
+                  rowId: button.reply?.id || button.id || '',
+                  description: button.reply?.description || '',
+                })),
+              },
+            ]
+
+        response.listMessage = {
+          title: header.text || '',
+          description: body.text || 'Nenhuma descriçao encontrada',
+          buttonText: action.button || 'Selecione',
+          footerText: footer.text || '',
+          sections,
           listType: 2,
         }
       }
-      response.listMessage = listMessage
       break
     case 'image':
     case 'audio':
     case 'document':
     case 'video':
-      const url = payload[type].link
-      if (url) {
-        let mimetype = mime.lookup(url.split('?')[0])
-        if (type == 'audio') {
-          if (mimetype == 'audio/ogg') {
-            mimetype = 'audio/ogg; codecs=opus'
-          } else if (!mimetype) {
-            mimetype = 'audio/mpeg'
-          }
+      const link = payload[type].link
+      if (link) {
+        let mimetype: string = getMimetype(payload)
+        if (type == 'audio' && SEND_AUDIO_MESSAGE_AS_PTT) {
           response.ptt = true
-        }
-        if (mimetype) {
-          response.mimetype = mimetype
         }
         if (payload[type].filename) {
           response.fileName = payload[type].filename
         }
-        if (payload[type].caption) {
-          response.caption = payload[type].caption
+        if (mimetype) {
+          response.mimetype = mimetype
         }
-        response[type] = { url }
+        if (payload[type].caption) {
+          response.caption = customMessageCharactersFunction(payload[type].caption)
+        }
+        response[type] = { url: link }
         break
       }
+
+    case 'contacts':
+      const contact = payload[type][0]
+      const contacName = contact?.name?.formatted_name
+      const phones = contact?.phones || []
+      const contacts: any[] = []
+      for (let index = 0; index < phones.length; index++) {
+        const phone = phones[index]
+        const waid = phone['wa_id']
+        const number = phone['phone']
+        const vcard = 'BEGIN:VCARD\n' + 'VERSION:3.0\n' + `N:${contacName}\n` + `TEL;type=CELL;type=VOICE;waid=${waid}:${number}\n` + 'END:VCARD'
+        contacts.push({ vcard })
+      }
+      const displayName = contacts.length > 1 ? `${contacts.length} contacts` : contacName
+      response[type] = { displayName, contacts }
+      break
 
     case 'template':
       throw new BindTemplateError()
@@ -232,7 +522,7 @@ export const phoneNumberToJid = (phoneNumber: string) => {
 }
 
 export const isIndividualJid = (jid: string) => {
-  const isIndividual = isJidUser(jid)
+  const isIndividual = jid.endsWith('@s.whatsapp.net') || jid.indexOf('@') < 0
   logger.debug('jid %s is individual? %s', jid, isIndividual)
   return isIndividual
 }
@@ -243,6 +533,36 @@ export const isIndividualMessage = (payload: any) => {
     key: { remoteJid },
   } = payload
   return isIndividualJid(remoteJid)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const getChatAndNumberAndId = (payload: any): [string, string, string] => {
+  const {
+    key: { remoteJid },
+  } = payload
+  const split = remoteJid.split('@')
+  const id = `${split[0].split(':')[0]}@${split[1]}`
+  if (isIndividualJid(remoteJid)) {
+    return [id, jidToPhoneNumber(remoteJid, ''), id]
+  } else {
+    return [id, ...getNumberAndId(payload)]
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const getNumberAndId = (payload: any): [string, string] => {
+  const {
+    key: { remoteJid, senderPn, participantPn, participant, senderLid, participantLid, recipientLid },
+    participant: participant2,
+    participantPn: participantPn2,
+  } = payload
+
+  const lid = senderLid || participantLid || recipientLid || participant || participant2 || remoteJid
+  const split = lid.split('@')
+  const id = `${split[0].split(':')[0]}@${split[1]}`
+  const pn = participantPn || senderPn || participantPn2 || participant || participant2
+  const phone = pn ? jidToPhoneNumber(pn, '') : id
+  return [phone, id]
 }
 
 export const formatJid = (jid: string) => {
@@ -262,8 +582,146 @@ export const isValidPhoneNumber = (value: string, nine = false): boolean => {
   return !isInValid
 }
 
+export const extractDestinyPhone = (payload: object, throwError = true) => {
+  const data = payload as any
+  const number =
+    data?.to ||
+    data?.recipient_id ||
+    (data?.entry &&
+      data.entry[0] &&
+      data.entry[0].changes &&
+      data.entry[0].changes[0] &&
+      data.entry[0].changes[0].value &&
+      ((data.entry[0].changes[0].value.contacts &&
+        data.entry[0].changes[0].value.contacts[0] &&
+        data.entry[0].changes[0].value.contacts[0].wa_id?.replace('+', '')) ||
+        (data.entry[0].changes[0].value.statuses &&
+          data.entry[0].changes[0].value.statuses[0] &&
+          data.entry[0].changes[0].value.statuses[0].recipient_id?.replace('+', '')) ||
+        (data.entry[0].changes[0].value.message_echoes &&
+          data.entry[0].changes[0].value.message_echoes[0] &&
+          data.entry[0].changes[0].value.message_echoes[0].to.replace('+', ''))))
+  if (!number && throwError) {
+    throw Error(`error on get phone number from ${JSON.stringify(payload)}`)
+  }
+  return number
+}
+export const extractFromPhone = (payload: object, throwError = true) => {
+  const data = payload as any
+  const number =
+    data?.entry &&
+    data.entry[0] &&
+    data.entry[0].changes &&
+    data.entry[0].changes[0] &&
+    data.entry[0].changes[0].value &&
+    ((data.entry[0].changes[0].value.messages &&
+      data.entry[0].changes[0].value.messages[0] &&
+      data.entry[0].changes[0].value.messages[0].from?.replace('+', '')) ||
+      (data.entry[0].changes[0].value.message_echoes &&
+        data.entry[0].changes[0].value.message_echoes[0] &&
+        data.entry[0].changes[0].value.message_echoes[0].from?.replace('+', '')))
+  if (!number && throwError) {
+    throw Error(`error on get phone number from ${JSON.stringify(payload)}`)
+  }
+  return number
+}
+
+export const getGroupId = (payload: object) => {
+  const data = payload as any
+  return (
+    data.entry &&
+    data.entry[0] &&
+    data.entry[0].changes &&
+    data.entry[0].changes[0] &&
+    data.entry[0].changes[0].value &&
+    (
+      (
+        data.entry[0].changes[0].value.contacts &&
+        data.entry[0].changes[0].value.contacts[0] &&
+        data.entry[0].changes[0].value.contacts[0].group_id
+      ) || (
+        data.entry[0].changes[0].value.messages &&
+        data.entry[0].changes[0].value.messages[0] &&
+        data.entry[0].changes[0].value.messages[0].group_id
+      ) || (
+        data.entry[0].changes[0].value.statuses &&
+        data.entry[0].changes[0].value.statuses[0] &&
+        data.entry[0].changes[0].value.statuses[0].recipient_type == 'group' && 
+        data.entry[0].changes[0].value.statuses[0].group_id
+      )
+    )
+  )
+}
+
+export const isGroupMessage = (payload: object) => {
+  return !!getGroupId(payload)
+}
+
+export const isNewsletterMessage = (payload: object) => {
+  const groupId = getGroupId(payload)
+  return groupId && isJidNewsletter(groupId)
+}
+
+export const extractSessionPhone = (payload: object) => {
+  const data = payload as any
+  const session =
+    data.entry &&
+    data.entry[0] &&
+    data.entry[0].changes &&
+    data.entry[0].changes[0].value.messages &&
+    data.entry[0].changes[0].value.metadata &&
+    data.entry[0].changes[0].value.metadata.display_phone_number
+
+  return `${session || ''}`.replaceAll('+', '')
+}
+
+export const isOutgoingMessage = (payload: object) => {
+  const from = extractFromPhone(payload, false)
+  const session = extractSessionPhone(payload)
+  return session && from && session == from
+}
+
+export const isUpdateMessage = (payload: object) => {
+  const data = payload as any
+  return data.entry[0].changes[0].value.statuses && data.entry[0].changes[0].value.statuses[0]
+}
+
+export const isIncomingMessage = (payload: object) => {
+  return !isOutgoingMessage(payload)
+}
+
+export const extractTypeMessage = (payload: object) => {
+  const data = payload as any
+  return (
+    data?.entry &&
+    data.entry[0] &&
+    data.entry[0].changes &&
+    data.entry[0].changes[0] &&
+    data.entry[0].changes[0].value &&
+    ((data.entry[0].changes[0].value.messages && data.entry[0].changes[0].value.messages[0] && data.entry[0].changes[0].value.messages[0].type) ||
+      (data.entry[0].changes[0].value.message_echoes &&
+        data.entry[0].changes[0].value.message_echoes[0] &&
+        data.entry[0].changes[0].value.message_echoes[0].type))
+  )
+}
+
+export const isAudioMessage = (payload: object) => {
+  return 'audio' == extractTypeMessage(payload)
+}
+
+export const isFailedStatus = (payload: object) => {
+  const data = payload as any
+  return (
+    'failed' ==
+    (data.entry[0].changes[0].value.statuses && data.entry[0].changes[0].value.statuses[0] && data.entry[0].changes[0].value.statuses[0].status)
+  )
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const jidToPhoneNumber = (value: any, plus = '+', retry = true): string => {
+  if (isLidUser(value) || isJidNewsletter(value)) {
+    return value
+  }
   const number = (value || '').split('@')[0].split(':')[0].replace('+', '')
   const country = number.substring(0, 2)
   if (country == '55') {
@@ -277,6 +735,10 @@ export const jidToPhoneNumber = (value: any, plus = '+', retry = true): string =
     }
   }
   return `${plus}${number.replace('+', '')}`
+}
+
+export const jidToPhoneNumberIfUser = (value: any): string => {
+  return isIndividualJid(value) ? jidToPhoneNumber(value, '') : value
 }
 
 /*
@@ -318,15 +780,12 @@ export const jidToPhoneNumber = (value: any, plus = '+', retry = true): string =
  }
 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const fromBaileysMessageContent = (phone: string, payload: any, config?: Partial<Config>): any => {
+export const fromBaileysMessageContent = (phone: string, payload: any, config?: Partial<Config>): [any, string, string, string] => {
   try {
     const {
-      key: { remoteJid, id: whatsappMessageId, participant, fromMe },
+      key: { id: whatsappMessageId, originalId, fromMe },
     } = payload
-    const chatJid = formatJid(remoteJid)
-    const isIndividual = isIndividualJid(chatJid)
-    const senderJid = isIndividual ? chatJid : (participant && formatJid(participant)) || chatJid
-    const senderPhone = jidToPhoneNumber(senderJid)
+    const [chatJid, senderPhone, senderId] = getChatAndNumberAndId(payload)
     const messageType = getMessageType(payload)
     const binMessage = payload.update || payload.receipt || (messageType && payload.message && payload.message[messageType])
     let profileName
@@ -335,7 +794,7 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
     } else {
       profileName = payload.verifiedBizName || payload.pushName || senderPhone
     }
-    let cloudApiStatus
+    let cloudApiStatus, group_id, recipient_type
     let messageTimestamp = payload.messageTimestamp
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const groupMetadata: any = {}
@@ -343,10 +802,20 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
       groupMetadata.group_subject = payload.groupMetadata.subject
       groupMetadata.group_id = chatJid
       groupMetadata.group_picture = payload.groupMetadata.profilePicture
+    } else if (isJidGroup(chatJid)) {
+      if (config?.groupMessagesCloudFormat) {
+        recipient_type = 'group'
+        group_id = chatJid
+      } else {
+        groupMetadata.group_subject = chatJid
+        groupMetadata.group_id = chatJid
+        groupMetadata.group_picture = ''
+      }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const statuses: any[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fieldMessage = config?.outgoingMessagesCoex ? 'message_echoes' : 'messages'
     const messages: any[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const errors: any[] = []
@@ -354,38 +823,46 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
       value: {
         messaging_product: 'whatsapp',
         metadata: {
-          display_phone_number: phone,
-          phone_number_id: phone,
+          display_phone_number: phone.replace('+', ''),
+          phone_number_id: phone.replace('+', ''),
         },
-        messages,
-        contacts: [
-          {
-            profile: {
-              name: profileName,
-              picture: payload.profilePicture,
-            },
-            ...groupMetadata,
-            wa_id: jidToPhoneNumber(senderPhone, ''),
-          },
-        ],
+        [fieldMessage]: messages,
         statuses,
         errors,
       },
-      field: 'messages',
+      field: config?.outgoingMessagesCoex ? 'smb_message_echoes' : 'messages',
+    }
+    if (!config?.outgoingMessagesCoex) {
+      change.value.contacts = [
+        {
+          profile: {
+            name: profileName,
+            picture: payload.profilePicture,
+          },
+          ...groupMetadata,
+          wa_id: senderPhone.replace('+', '') || senderId,
+        },
+      ]
     }
     const data = {
       object: 'whatsapp_business_account',
       entry: [
         {
-          id: phone,
+          id: chatJid,
           changes: [change],
         },
       ],
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const message: any = {
-      from: (fromMe ? phone : senderPhone).replace('+', ''),
+      from: fromMe ? phone.replace('+', '') : senderPhone.replace('+', '') || senderId,
       id: whatsappMessageId,
+    }
+    if (group_id) {
+      message.group_id = group_id
+    }
+    if (config?.outgoingMessagesCoex) {
+      message.to = !fromMe ? phone.replace('+', '') : senderPhone.replace('+', '') || senderId
     }
     if (payload.messageTimestamp) {
       message['timestamp'] = payload.messageTimestamp.toString()
@@ -396,17 +873,21 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
       case 'audioMessage':
       case 'stickerMessage':
       case 'documentMessage':
-        const mediaType = messageType.replace('Message', '')
+      case 'ptvMessage':
+        let mediaType = messageType.replace('Message', '')
         const mediaKey = `${phone}/${whatsappMessageId}`
         const mimetype = (binMessage.fileName && mime.lookup(binMessage.fileName)) || binMessage.mimetype.split(';')[0]
         const extension = mime.extension(mimetype)
         const filename = binMessage.fileName || `${payload.key.id}.${extension}`
+        if (mediaType == 'pvt') {
+          mediaType = mimetype.split('/')[0]
+        }
         message[mediaType] = {
           caption: binMessage.caption,
           filename,
           mime_type: mimetype,
           sha256: binMessage.fileSha256,
-          url: binMessage.url && binMessage.url.indexOf('base64') < 0 ? binMessage.url : '',
+          // url: binMessage.url && binMessage.url.indexOf('base64') < 0 ? binMessage.url : '',
           id: mediaKey,
         }
         message.type = mediaType
@@ -423,13 +904,16 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
           const vcard = vcards[i]
           if (vcard) {
             const card: vCard = new vCard().parse(vcard.replace(/\r?\n/g, '\r\n'))
+            const formatted_name = card.get('fn')?.valueOf()
+            const vcardPhone = card.get('tel')?.valueOf()
+            if (!vcardPhone) {
+              continue
+            }
             const contact = {
-              name: {
-                formatted_name: card.get('fn').valueOf(),
-              },
+              name: { formatted_name },
               phones: [
                 {
-                  phone: card.get('tel').valueOf(),
+                  phone: vcardPhone,
                 },
               ],
             }
@@ -442,30 +926,70 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
 
       case 'editedMessage':
         // {"key":{"remoteJid":"120363193643042227@g.us","fromMe":false,"id":"3EB06C161FED2A9D63C767","participant":"554988290955@s.whatsapp.net"},"messageTimestamp":1698278099,"pushName":"Clairton Rodrigo Heinzen","broadcast":false,"message":{"messageContextInfo":{"deviceListMetadata":{"senderKeyHash":"ltZ5vMXiILth5A==","senderTimestamp":"1697942459","recipientKeyHash":"GVXxipL53tKc2g==","recipientTimestamp":"1697053156"},"deviceListMetadataVersion":2},"editedMessage":{"message":{"protocolMessage":{"key":{"remoteJid":"120363193643042227@g.us","fromMe":true,"id":"3EB03E16AD6F36BFCDD9F5","participant":"554988290955@s.whatsapp.net"},"type":"MESSAGE_EDIT","editedMessage":{"conversation":"Kailaine, reagenda esse pacientes da dra Eloisa que estão em dias diferentes da terça e quinta\\nQuando tiver concluido me avisa para fechar a agendar, pois foi esquecido de fechar a agenda"},"timestampMs":"1698278096189"}}}}}
-        const editedMessage = binMessage.message.protocolMessage[messageType]
+        // {"key":{"remoteJid":"X@s.whatsapp.net","fromMe":false,"id":"X"},"messageTimestamp":1742222988,"pushName":"X","message":{"editedMessage":{"message":{"conversation":"Bom dia, tudo bem?"}}},"verifiedBizName":"X"}
+        const editedMessage = binMessage.message.protocolMessage ? binMessage.message.protocolMessage[messageType] : binMessage.message
         const editedMessagePayload = {
           ...payload,
           message: editedMessage,
         }
-        return fromBaileysMessageContent(phone, editedMessagePayload)
+        const editedMessageType = getMessageType(editedMessagePayload)
+        const editedBinMessage = getBinMessage(editedMessagePayload)
+        if (
+          editedMessageType &&
+          TYPE_MESSAGES_TO_PROCESS_FILE.includes(editedMessageType) &&
+          !editedBinMessage?.message?.url &&
+          editedBinMessage?.message?.caption
+        ) {
+          editedMessagePayload.message = {
+            conversation: editedBinMessage?.message?.caption,
+          }
+        }
+        return fromBaileysMessageContent(phone, editedMessagePayload, config)
+
+      case 'protocolMessage':
+        // {"key":{"remoteJid":"351912490567@s.whatsapp.net","fromMe":false,"id":"3EB0C77FBE5C8DACBEC5"},"messageTimestamp":1741714271,"pushName":"Pedro Paiva","broadcast":false,"message":{"protocolMessage":{"key":{"remoteJid":"351211450051@s.whatsapp.net","fromMe":true,"id":"3EB05C0B7B1A0C12284EE0"},"type":"MESSAGE_EDIT","editedMessage":{"conversation":"blablabla2","messageContextInfo":{"messageSecret":"4RYW9eIV1O4j5vjNmY059bZRymJ+B2aTfi9it9+2RxA="}},"timestampMs":"1741714271693"},"messageContextInfo":{"deviceListMetadata":{"senderKeyHash":"UgdPt0CEKvqhyg==","senderTimestamp":"1741018303","senderAccountType":"E2EE","receiverAccountType":"E2EE","recipientKeyHash":"EhuHta8R2tH+8g==","recipientTimestamp":"1740522549"},"deviceListMetadataVersion":2,"messageSecret":"4RYW9eIV1O4j5vjNmY059bZRymJ+B2aTfi9it9+2RxA="}}}
+        if (binMessage.editedMessage) {
+          return fromBaileysMessageContent(phone, { ...payload, message: { editedMessage: { message: { protocolMessage: binMessage } } } }, config)
+        } else {
+          logger.debug(`Ignore message type ${messageType}`)
+          return [null, senderPhone, senderId, chatJid]
+        }
 
       case 'ephemeralMessage':
       case 'viewOnceMessage':
       case 'viewOnceMessageV2':
       // {"key":{"remoteJid":"554891710539@s.whatsapp.net","fromMe":false,"id":"3EB016D7881A2C29E25378"},"messageTimestamp":1704301811,"pushName":"Rodrigo","broadcast":false,"message":{"messageContextInfo":{"deviceListMetadata":{"senderKeyHash":"n3DiVMM5RFh8Cg==","senderTimestamp":"1703800265","recipientKeyHash":"5IqwqCOTqgXgCA==","recipientTimestamp":"1704205568"},"deviceListMetadataVersion":2},"documentWithCaptionMessage":{"message":{"documentMessage":{"url":"https://mmg.whatsapp.net/v/t62.7119-24/24248058_881769707068106_5138895532383847851_n.enc?ccb=11-4&oh=01_AdQM6YlfR3dW_UvRoLmPQeqOl08pdn8DNtTCTP1DMz4gcA&oe=65BCEDEA&_nc_sid=5e03e0&mms3=true","mimetype":"text/csv","title":"Clientes-03-01-2024-11-38-32.csv","fileSha256":"dmBD4FB1aoDA9fnIRXbvqgExKmxqK6qjGFIGETMmH4Y=","fileLength":"266154","mediaKey":"Mmu+1SthUQuVn8JM+W1Uwttkb3Vo/VQlSJQd/ddNixU=","fileName":"Clientes-03-01-2024-11-38-32.csv","fileEncSha256":"+EadJ+TTn43nOvcccdXAdHSYt9KQy+R7lcsmwkotQnY=","directPath":"/v/t62.7119-24/24248058_881769707068106_5138895532383847851_n.enc?ccb=11-4&oh=01_AdQM6YlfR3dW_UvRoLmPQeqOl08pdn8DNtTCTP1DMz4gcA&oe=65BCEDEA&_nc_sid=5e03e0","mediaKeyTimestamp":"1704301417","contactVcard":false,"contextInfo":{"ephemeralSettingTimestamp":"1702988379","disappearingMode":{"initiator":"CHANGED_IN_CHAT"}},"caption":"pode subir essa campanha por favor"}}}}}
       case 'documentWithCaptionMessage':
+      // {"key":{"remoteJid":"554988290955@s.whatsapp.net","fromMe":false,"id":"3A3BD07D3529A482876A"},"messageTimestamp":1726448401,"pushName":"Clairton Rodrigo Heinzen","broadcast":false,"message":{"messageContextInfo":{"deviceListMetadata":{"senderKeyHash":"FxWbzja6L9qr6A==","senderTimestamp":"1725477022","recipientKeyHash":"HDhq+OTRdd9hhg==","recipientTimestamp":"1725986929"},"deviceListMetadataVersion":2},"viewOnceMessageV2Extension":{"message":{"audioMessage":{"url":"https://mmg.whatsapp.net/v/t62.7117-24/26550443_409309922183140_5545513783776136395_n.enc?ccb=11-4&oh=01_Q5AaIFdNmgUqP86I5VM6WLnt4i1h6wxOoPGY2kvj7wQlhE4c&oe=670EF9DE&_nc_sid=5e03e0&mms3=true","mimetype":"audio/ogg; codecs=opus","fileSha256":"kIFwwAF/PlmPp/Lxy2lVKgt8aq+fzSe+XmRwT5/Cn5A=","fileLength":"11339","seconds":8,"ptt":true,"mediaKey":"MEOnPR/10pkdQhNjjoB1yJXOZ/x9XAJk0m1XI1g7tdM=","fileEncSha256":"ZS1J1Zkjd93jz8TVg9rlNSotMCVbbZyBR/lOIwQhkSI=","directPath":"/v/t62.7117-24/26550443_409309922183140_5545513783776136395_n.enc?ccb=11-4&oh=01_Q5AaIFdNmgUqP86I5VM6WLnt4i1h6wxOoPGY2kvj7wQlhE4c&oe=670EF9DE&_nc_sid=5e03e0","mediaKeyTimestamp":"1726448391","streamingSidecar":"hRM//de8KSrVng==","waveform":"AAYEAgEBAQMGFxscHBQkJBscIyMcHBUPCQQCAQEAAAEPIRwkHhgXGBQJBAIBAAAAAAAAAAAAAAAAAAAAAAAAAA==","viewOnce":true}}}}}
+      case 'viewOnceMessageV2Extension':
+      case 'lottieStickerMessage':
+      case 'interactiveMessage':
         const changedPayload = {
           ...payload,
-          message: binMessage.message,
+          message: binMessage.message || binMessage,
         }
-        return fromBaileysMessageContent(phone, changedPayload)
+        return fromBaileysMessageContent(phone, changedPayload, config)
 
       case 'conversation':
       case 'extendedTextMessage':
         message.text = {
-          body: binMessage.text || binMessage,
+          body: binMessage?.text || binMessage,
         }
         message.type = 'text'
+        break
+
+      case 'nativeFlowMessage':
+        // {"key":{"remoteJid":"x@s.whatsapp.net","fromMe":false,"id":"wjdgujkk","senderLid":"X@lid","senderPn":"X@s.whatsapp.net"},"messageTimestamp":1770817659,"pushName":"Refrigeração S","message":{"interactiveMessage":{"nativeFlowMessage":{"buttons":[{"name":"payment_info","buttonParamsJson":"{\"currency\":\"BRL\",\"total_amount\":{\"value\":0,\"offset\":100},\"reference_id\":\"XYZ\",\"type\":\"physical-goods\",\"order\":{\"status\":\"pending\",\"subtotal\":{\"value\":0,\"offset\":100},\"order_type\":\"ORDER\",\"items\":[{\"name\":\"\",\"amount\":{\"value\":0,\"offset\":100},\"quantity\":0,\"sale_amount\":{\"value\":0,\"offset\":100}}]},\"payment_settings\":[{\"type\":\"pix_static_code\",\"pix_static_code\":{\"merchant_name\":\"Refrigeração S LTDA\",\"key\":\"XXXX\",\"key_type\":\"CNPJ\"}}],\"share_payment_status\":false,\"referral\":\"chat_attachment\"}"}]}}},"verifiedBizName":"Refrigeração S"}
+        const button = (binMessage?.buttons || [])[0] || {}
+        const jsonParams: any = JSON.parse(button.buttonParamsJson || '{}')
+        const settings = (jsonParams?.payment_settings || [])[0] || {}
+        if (['pix_dynamic_code', 'pix_static_code'].includes(settings.type)) {
+          const { merchant_name, key_type, key } = settings[settings.type] || {}
+          message.text = {
+            body: `*${merchant_name}*\nChave PIX tipo *${key_type}*: ${key}`
+          }
+          message.type = 'text'
+        }
         break
 
       case 'reactionMessage':
@@ -486,6 +1010,19 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
             emoji: binMessage.text,
           }
           message.type = 'reaction'
+        }
+        break
+
+      case 'templateButtonReplyMessage':
+        const replyMessageId = binMessage?.contextInfo?.stanzaId
+        message.button = {
+          payload: binMessage?.selectedId,
+          text: binMessage?.selectedDisplayText
+        }
+        message.type = 'button'
+        message.context = {
+          message_id: replyMessageId,
+          id: replyMessageId,
         }
         break
 
@@ -514,28 +1051,26 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
         break
 
       case 'messageStubType':
-        const errors = [
-          'Message absent from node',
-          'Invalid PreKey ID',
-          'Key used already or never filled',
-          'No SenderKeyRecord found for decryption',
-          'No session record',
-        ]
-        if (payload.messageStubType == 2 && payload.messageStubParameters && errors.includes(payload.messageStubParameters[0])) {
+        if (
+          payload.messageStubType == 2 &&
+          payload.messageStubParameters &&
+          payload.messageStubParameters[0] &&
+          MESSAGE_STUB_TYPE_ERRORS.filter((s) => payload.messageStubParameters[0].toLowerCase().indexOf(s) >= 0).length > 0
+        ) {
           message.text = {
-            body: '🕒 Não foi possível ler a mensagem. Peça para enviar novamente ou abra o Whatsapp no celular.',
+            body: MESSAGE_CHECK_WAAPP || t('failed_decrypt'),
           }
           message.type = 'text'
-          change.value.messages.push(message)
-          throw new DecryptError(data)
+          messages.push(message)
+          throw new DecryptError(data, originalId || whatsappMessageId)
         } else {
-          return
+          return [null, senderPhone, senderId, chatJid]
         }
 
       case 'update':
         const baileysStatus = payload.status || payload.update.status
         if (!baileysStatus && payload.update.status != 0 && !payload?.update?.messageStubType && !payload?.update?.starred) {
-          return
+          return [null, senderPhone, senderId, chatJid]
         }
         switch (baileysStatus) {
           case 0:
@@ -576,7 +1111,7 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
             break
 
           default:
-            if (payload.update && payload.update.messageStubType && payload.update.messageStubType == 1) {
+            if ([1, '1', 'REVOKE'].includes(payload?.update?.messageStubType)) {
               cloudApiStatus = 'deleted'
             } else if (payload?.update?.starred) {
               // starred in unknown, but if is starred the userd read the message
@@ -592,18 +1127,110 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
             }
         }
         break
+
       case 'listResponseMessage':
-        message.text = {
-          body: payload.message.listResponseMessage.title,
+        const listReplyMessageId = binMessage?.contextInfo?.stanzaId
+        const rowId = binMessage?.singleSelectReply?.selectedRowId
+        const section = (binMessage?.contextInfo?.quotedMessage?.listMessage?.sections || []).find(
+          s => (s?.rows || []).find(r => { 
+            return r?.rowId == rowId
+          })
+        )
+        const row = (section?.rows || []).find(r => { 
+          return r?.rowId == rowId
+        })
+        message.interactive = { 
+          type: 'list_reply',
+          list_reply: { 
+            id: rowId,
+            title: row?.title || '',
+            description: row?.description || ''
+          }
         }
-        message.type = 'text'
+        message.type = 'interactive'
+        message.context = {
+          message_id: listReplyMessageId,
+          id: listReplyMessageId,
+        }
+        break
+
+      case 'buttonsResponseMessage':
+        const buttonReplyMessageId = binMessage?.contextInfo?.stanzaId
+        message.interactive = { 
+          type: 'button_reply',
+          button_reply: { 
+            id: binMessage?.selectedButtonId,
+            title: binMessage?.selectedDisplayText
+          }
+        }
+        message.type = 'interactive'
+        message.context = {
+          message_id: buttonReplyMessageId,
+          id: buttonReplyMessageId,
+        }
+        break
+
+      case 'listMessage':
+        message.interactive = {
+          type: 'list',
+          header: {
+            text: binMessage?.headerText
+          },
+          body: {
+            text: binMessage?.description
+          },
+          footer: {
+            text: binMessage?.footerText
+          },
+          action: {
+            button: binMessage?.buttonText,
+            sections: (binMessage?.sections || []).map((section: any) => ({
+              title: section.title || '',
+              rows: (section.rows || []).map((row: any) => ({
+                title: row.title || '',
+                id: row.rowId || row.id || '',
+                description: row.description || '',
+              })),
+            }))
+          }
+        }
+        message.type = 'interactive'
+        break
+
+      case 'buttonsMessage':
+        message.interactive = {
+          type: 'button',
+          header: {
+            text: binMessage?.headerText
+          },
+          body: {
+            text: binMessage?.contentText
+          },
+          footer: {
+            text: binMessage?.footerText
+          },
+          action: {
+            buttons: (binMessage?.buttons || []).map((button: any) => ({
+              type: 'reply',
+              reply: {
+                title: button?.buttonText?.displayText,
+                id: button.buttonId,
+              }
+            }))
+          }
+        }
+        message.type = 'interactive'
+        break
+
+      case 'statusMentionMessage':
         break
 
       case 'messageContextInfo':
-      case 'protocolMessage':
       case 'senderKeyDistributionMessage':
+      case 'albumMessage':
+      case 'keepInChatMessage':
         logger.debug(`Ignore message type ${messageType}`)
-        return
+        return [null, senderPhone, senderId, chatJid]
 
       default:
         cloudApiStatus = 'failed'
@@ -624,8 +1251,11 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
           // expiration_timestamp: new Date().setDate(new Date().getDate() + 30),
         },
         id: messageId,
-        recipient_id: senderPhone.replace('+', ''),
+        recipient_id: recipient_type == 'group' ? chatJid : senderPhone.replace('+', '') || senderId,
         status: cloudApiStatus,
+      }
+      if (recipient_type) {
+        state.recipient_type = recipient_type
       }
       if (payload.messageTimestamp) {
         state['timestamp'] = payload.messageTimestamp.toString()
@@ -681,12 +1311,23 @@ export const fromBaileysMessageContent = (phone: string, payload: any, config?: 
           `
         }
       }
-      change.value.messages.push(message)
+      messages.push(message)
     }
     logger.debug('fromBaileysMessageContent %s => %s', phone, JSON.stringify(data))
-    return data
+    return [data, senderPhone, senderId, chatJid]
   } catch (e) {
-    logger.error(e, 'Error on convert baileys to cloud-api')
+    if (!isDecryptError(e)) {
+      logger.error(e, 'Error on convert baileys to cloud-api')
+    }
     throw e
   }
+}
+
+export const toBuffer = (arrayBuffer) => {
+  const buffer = Buffer.alloc(arrayBuffer.byteLength)
+  const view = new Uint8Array(arrayBuffer)
+  for (let i = 0; i < buffer.length; ++i) {
+    buffer[i] = view[i]
+  }
+  return buffer
 }

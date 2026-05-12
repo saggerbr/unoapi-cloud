@@ -1,7 +1,8 @@
-import { proto, WAMessage, WAMessageKey, isJidGroup, GroupMetadata } from '@whiskeysockets/baileys'
-import { DataStore } from './data_store'
-import { jidToPhoneNumber, phoneNumberToJid } from './transformer'
+import { proto, WAMessage, WAMessageKey, GroupMetadata } from 'baileys'
+import { DataStore, MessageDirection, MessageStatus } from './data_store'
+import { jidToPhoneNumber, phoneNumberToJid, isIndividualJid, formatJid } from './transformer'
 import { getDataStore, dataStores } from './data_store'
+import { ONLY_HELLO_TEMPLATE } from '../defaults'
 import {
   delAuth,
   setMessage,
@@ -21,6 +22,13 @@ import {
   getGroup,
   delConfig,
   setTemplates,
+  setMedia,
+  getMedia,
+  getMessageDirection,
+  setMessageDirection,
+  jidKey,
+  redisKeys,
+  redisGet
 } from './redis'
 import { Config } from './config'
 import logger from './logger'
@@ -42,6 +50,7 @@ export const getDataStoreRedis: getDataStore = async (phone: string, config: Con
 const dataStoreRedis = async (phone: string, config: Config): Promise<DataStore> => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const store: DataStore = await getDataStoreFile(phone, config)
+  store.type = 'redis'
   store.loadKey = async (id: string) => {
     const key = await getKey(phone, id)
     const mkey: WAMessageKey = key as WAMessageKey
@@ -51,10 +60,19 @@ const dataStoreRedis = async (phone: string, config: Config): Promise<DataStore>
     await setKey(phone, id, key)
   }
   store.getImageUrl = async (jid: string) => {
-    return getProfilePicture(phone, jid)
-  }
-  store.setImageUrl = async (jid: string, url: string) => {
-    await setProfilePicture(phone, jid, url)
+    const phoneNumber = jidToPhoneNumber(jid)
+    const url = await getProfilePicture(phone, phoneNumber)
+    if (url) {
+      url
+    } else {
+      const { mediaStore } = await config.getStore(phone, config)
+      const { getProfilePictureUrl } = mediaStore
+      const profileUrl = await getProfilePictureUrl('', jid)
+      if (profileUrl) {
+        await setProfilePicture(phone, phoneNumber, profileUrl)
+        return profileUrl
+      }
+    }
   }
   store.getGroupMetada = async (jid: string) => {
     return getGroup(phone, jid)
@@ -64,38 +82,55 @@ const dataStoreRedis = async (phone: string, config: Config): Promise<DataStore>
   }
   store.loadUnoId = async (id: string) => await getUnoId(phone, id)
   store.setUnoId = async (id: string, unoId: string) => setUnoId(phone, id, unoId)
-
-  store.loadJid = async (phoneOrJid: string) => {
-    return getJid(phone, phoneOrJid)
+  store.loadMediaPayload = async (id: string) => getMedia(phone, id)
+  store.setMediaPayload = async (id: string, payload: string) => setMedia(phone, id, payload)
+  store.getJid = async (phoneOrJid: string) => {
+    const jid = await getJid(phone, phoneOrJid)
+    logger.debug('Found jid on redis session %s phone %s -> %s', phone, phoneOrJid, jid)
+    return jid
   }
   store.setJid = async (phoneOrJid: string, jid: string) => {
     await setJid(phone, phoneOrJid, jid)
   }
   store.loadMessage = async (remoteJid: string, id: string) => {
-    const newJid = isJidGroup(remoteJid) ? remoteJid : phoneNumberToJid(jidToPhoneNumber(remoteJid))
-    const m = await getMessage(phone, newJid, id)
-    const wm = m as proto.IWebMessageInfo
-    return wm
+    const clientPhone = jidToPhoneNumber(remoteJid)
+    let m
+    m = await getMessage(phone, clientPhone, id)
+    if (!m) {
+      const newJid = isIndividualJid(remoteJid) ? phoneNumberToJid(jidToPhoneNumber(remoteJid)) : remoteJid
+      m = await getMessage(phone, newJid, id)
+    }
+    if (!m) {
+      return
+    }
+    return m as proto.IWebMessageInfo
   }
   store.setMessage = async (remoteJid: string, message: WAMessage) => {
-    const newJid = isJidGroup(remoteJid) ? remoteJid : phoneNumberToJid(jidToPhoneNumber(remoteJid))
+    const clientPhone = jidToPhoneNumber(remoteJid);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    return setMessage(phone, newJid, message.key.id!, message)
+    return setMessage(phone, clientPhone, message.key.id!, message)
   }
-  store.cleanSession = async () => {
-    if (CLEAN_CONFIG_ON_DISCONNECT) {
+  store.cleanSession = async (removeConfig = CLEAN_CONFIG_ON_DISCONNECT) => {
+    if (removeConfig) {
       await delConfig(phone)
     }
     await delAuth(phone)
   }
-  store.setStatus = async (
-    id: string,
-    status: 'scheduled' | 'pending' | 'error' | 'failed' | 'sent' | 'delivered' | 'read' | 'played' | 'accepted' | 'deleted',
-  ) => {
+  store.setStatus = async (id: string, status: MessageStatus) => {
     return setMessageStatus(phone, id, status)
   }
   store.loadStatus = async (id: string) => {
-    return getMessageStatus(phone, id)
+    const status = await getMessageStatus(phone, id)
+    return status ? (status as MessageStatus) : undefined
+  }
+  store.setLastMessageDirection = async (clientPhone: string, direction: MessageDirection) => {
+    logger.debug('Last message direction phone %s to %s set %s', phone, clientPhone, direction)
+    return setMessageDirection(phone, clientPhone, direction)
+  }
+  store.loadLastMessageDirection = async (clientPhone: string) => {
+    const direction = await getMessageDirection(phone, clientPhone)
+    logger.debug('Last message direction phone %s to %s get %s', phone, clientPhone, direction)
+    return direction ? (direction as MessageDirection) : undefined
   }
   store.setTemplates = async (templates: string) => {
     return setTemplates(phone, templates)
@@ -124,81 +159,102 @@ const dataStoreRedis = async (phone: string, config: Config): Promise<DataStore>
         ],
       }
 
-      const bulkReport = {
-        id: 2,
-        name: 'unoapi-bulk-report',
-        status: 'APPROVED',
-        category: 'UTILITY',
-        language: 'pt_BR',
-        components: [
-          {
-            text: `bulk: {{bulk}}`,
-            type: 'BODY',
-            parameters: [
-              {
-                type: 'text',
-                text: 'bulk',
-              },
-            ],
-          },
-        ],
-      }
+      if (!ONLY_HELLO_TEMPLATE) {
+        const bulkReport = {
+          id: 2,
+          name: 'unoapi-bulk-report',
+          status: 'APPROVED',
+          category: 'UTILITY',
+          language: 'pt_BR',
+          components: [
+            {
+              text: `bulk: {{bulk}}`,
+              type: 'BODY',
+              parameters: [
+                {
+                  type: 'text',
+                  text: 'bulk',
+                },
+              ],
+            },
+          ],
+        }
 
-      const webhook = {
-        id: 3,
-        name: 'unoapi-webhook',
-        status: 'APPROVED',
-        category: 'UTILITY',
-        language: 'pt_BR',
-        components: [
-          {
-            text: `url: {{url}}\nheader: {{header}}\ntoken: {{token}}`,
-            type: 'BODY',
-            parameters: [
-              {
-                type: 'text',
-                text: 'url',
-              },
-              {
-                type: 'text',
-                text: 'header',
-              },
-              {
-                type: 'text',
-                text: 'token',
-              },
-            ],
-          },
-        ],
-      }
+        const webhook = {
+          id: 3,
+          name: 'unoapi-webhook',
+          status: 'APPROVED',
+          category: 'UTILITY',
+          language: 'pt_BR',
+          components: [
+            {
+              text: `url: {{url}}\nheader: {{header}}\ntoken: {{token}}`,
+              type: 'BODY',
+              parameters: [
+                {
+                  type: 'text',
+                  text: 'url',
+                },
+                {
+                  type: 'text',
+                  text: 'header',
+                },
+                {
+                  type: 'text',
+                  text: 'token',
+                },
+              ],
+            },
+          ],
+        }
 
-      const parameters: object[] = []
-      const config = {
-        id: 4,
-        name: 'unoapi-config',
-        status: 'APPROVED',
-        category: 'UTILITY',
-        language: 'pt_BR',
-        components: [
-          {
-            text: '',
-            type: 'BODY',
-            parameters,
-          },
-        ],
+        const parameters: object[] = []
+        const config = {
+          id: 4,
+          name: 'unoapi-config',
+          status: 'APPROVED',
+          category: 'UTILITY',
+          language: 'pt_BR',
+          components: [
+            {
+              text: '',
+              type: 'BODY',
+              parameters,
+            },
+          ],
+        }
+        const keysToIgnore = ['getStore', 'baseStore', 'shouldIgnoreKey', 'shouldIgnoreJid', 'webhooks']
+        const keys = Object.keys(defaultConfig).filter((k) => !keysToIgnore.includes(k))
+        const getTypeofProperty = <T, K extends keyof T>(o: T, name: K) => typeof o[name] || 'string'
+        for (const key of keys) {
+          const type = getTypeofProperty(defaultConfig, key as keyof Config)
+          const param: object = { type, text: key }
+          parameters.push(param)
+          config.components[0].text = `${key}: {{${key}}}\n${config.components[0].text}`
+        }
+        return [hello, bulkReport, webhook, config]
+      } else {
+        return [hello]
       }
-      const keysToIgnore = ['getStore', 'baseStore', 'shouldIgnoreKey', 'shouldIgnoreJid', 'webhooks']
-      const keys = Object.keys(defaultConfig).filter((k) => !keysToIgnore.includes(k))
-      const getTypeofProperty = <T, K extends keyof T>(o: T, name: K) => typeof o[name] || 'string'
-      for (const key of keys) {
-        const type = getTypeofProperty(defaultConfig, key as keyof Config)
-        const param: object = { type, text: key }
-        parameters.push(param)
-        config.components[0].text = `${key}: {{${key}}}\n${config.components[0].text}`
-      }
-
-      return [hello, bulkReport, webhook, config]
     }
   }
+
+  store.getAllJid = async () => {
+    try {
+      const pattern = jidKey(phone, '*')
+      const keys = await redisKeys(pattern)
+      logger.debug('Get all jid return keys: %s', JSON.stringify(keys))
+      const jids = await Promise.all(keys.map(async key => redisGet(key)))
+      const set = [...new Set(jids.map(formatJid))].filter(v => {
+        return v && v.split('@')[0].length > 1
+      })
+      logger.debug('Get all jid return jids: %s', JSON.stringify(set))
+      return set
+    } catch (error) {
+      logger.error(error, 'Erro on get all jids')
+      throw error
+    }
+  }
+
   return store
 }
